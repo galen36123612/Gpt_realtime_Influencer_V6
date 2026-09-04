@@ -22286,6 +22286,23 @@ import {
 
 type LogRole = "user" | "assistant" | "system" | "feedback";
 
+const MAX_REALTIME_TOOL_OUTPUT_CHARS = 60000;
+
+function serializeRealtimeToolResult(result: unknown) {
+  const serialized = JSON.stringify(result);
+
+  if (serialized.length <= MAX_REALTIME_TOOL_OUTPUT_CHARS) {
+    return serialized;
+  }
+
+  return JSON.stringify({
+    ok: false,
+    error: "tool_output_too_large",
+    message: "工具結果過大，請縮小查詢範圍或設定 limit 後重試。",
+    originalLength: serialized.length,
+  });
+}
+
 function extractFileCitationsFromOutput(
   output: any
 ): Array<{ file_id?: string; vector_store_id?: string; quote?: string }> {
@@ -23213,7 +23230,7 @@ function AppContent() {
                         item: {
                           type: "function_call_output",
                           call_id: call.call_id,
-                          output: JSON.stringify(toolResult).slice(0, 20000),
+                          output: serializeRealtimeToolResult(toolResult),
                         },
                       },
                       `(tool output: ${call.name})`
@@ -23836,9 +23853,6 @@ function App() {
 }
 
 export default App;
-
-
-
 
 
 
