@@ -22267,6 +22267,7 @@ import useAudioDownload from "./hooks/useAudioDownload";
 import {
   APP_MANAGED_REALTIME_TOOL_NAMES,
   isAppManagedRealtimeToolName,
+  normalizeTaipeiCivicToolArguments,
   selectTaipeiCivicTool,
 } from "@/app/lib/civicToolRouting";
 
@@ -22602,6 +22603,8 @@ function AppContent() {
     } catch {
       args = {};
     }
+
+    args = normalizeTaipeiCivicToolArguments(call.name, args);
 
     // ========================================================
     // Local Taipei Village Chief KB
@@ -23833,7 +23836,6 @@ function App() {
 }
 
 export default App;
-
 
 
 
