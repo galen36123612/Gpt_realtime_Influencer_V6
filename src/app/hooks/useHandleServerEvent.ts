@@ -919,6 +919,7 @@ import {
 import { useTranscript } from "@/app/contexts/TranscriptContext";
 import { useEvent } from "@/app/contexts/EventContext";
 import { runGuardrailClassifier } from "@/app/lib/callOai";
+import { isAppManagedRealtimeToolName } from "@/app/lib/civicToolRouting";
 
 export interface UseHandleServerEventParams {
   setSessionStatus: (status: SessionStatus) => void;
@@ -1202,7 +1203,10 @@ export function useHandleServerEvent({
         return;
       }
 
-      const simulatedResult = { result: true };
+      const simulatedResult = {
+        ok: false,
+        error: `No handler registered for tool: ${functionCallParams.name}`,
+      };
 
       addTranscriptBreadcrumb(
         `function call fallback: ${functionCallParams.name}`,
@@ -1430,7 +1434,8 @@ export function useHandleServerEvent({
             if (
               outputItem.type === "function_call" &&
               outputItem.name &&
-              outputItem.arguments
+              outputItem.arguments &&
+              !isAppManagedRealtimeToolName(outputItem.name)
             ) {
               const callId =
                 outputItem.call_id || `${outputItem.name}_${outputItem.arguments}`;
