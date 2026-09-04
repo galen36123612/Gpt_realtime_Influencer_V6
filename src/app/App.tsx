@@ -22264,6 +22264,12 @@ import { useEvent } from "@/app/contexts/EventContext";
 import { useHandleServerEvent } from "./hooks/useHandleServerEvent";
 import { allAgentSets, defaultAgentSetKey } from "@/app/agentConfigs";
 import useAudioDownload from "./hooks/useAudioDownload";
+import {
+  APP_MANAGED_REALTIME_TOOL_NAMES,
+  isAppManagedRealtimeToolName,
+  normalizeTaipeiCivicToolArguments,
+  selectTaipeiCivicTool,
+} from "@/app/lib/civicToolRouting";
 
 import {
   LOOKUP_TAIPEI_VILLAGE_CHIEF_TOOL,
@@ -22279,6 +22285,23 @@ import {
 } from "@/app/data/councilors";
 
 type LogRole = "user" | "assistant" | "system" | "feedback";
+
+const MAX_REALTIME_TOOL_OUTPUT_CHARS = 60000;
+
+function serializeRealtimeToolResult(result: unknown) {
+  const serialized = JSON.stringify(result);
+
+  if (serialized.length <= MAX_REALTIME_TOOL_OUTPUT_CHARS) {
+    return serialized;
+  }
+
+  return JSON.stringify({
+    ok: false,
+    error: "tool_output_too_large",
+    message: "工具結果過大，請縮小查詢範圍或設定 limit 後重試。",
+    originalLength: serialized.length,
+  });
+}
 
 function extractFileCitationsFromOutput(
   output: any
@@ -22336,10 +22359,13 @@ function AppContent() {
   const [dataChannel, setDataChannel] = useState<RTCDataChannel | null>(null);
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
   const hasSentWelcomeRef = useRef(false);
+  const sessionToolsReadyRef = useRef(false);
+  const respondedAudioItemIdsRef = useRef<Set<string>>(new Set());
 
   const peerConnection = useRef<RTCPeerConnection | null>(null);
   const audioElement = useRef<HTMLAudioElement | null>(null);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>("DISCONNECTED");
+  const [isSessionConfigured, setIsSessionConfigured] = useState(false);
 
   const [ratingsByTargetId, setRatingsByTargetId] = useState<Record<string, number>>({});
 
@@ -22595,6 +22621,8 @@ function AppContent() {
       args = {};
     }
 
+    args = normalizeTaipeiCivicToolArguments(call.name, args);
+
     // ========================================================
     // Local Taipei Village Chief KB
     // ========================================================
@@ -22727,8 +22755,42 @@ function AppContent() {
     return false;
   };
 
+  const sendResponseForUserText = (text: string, eventNameSuffix: string) => {
+    if (!sessionToolsReadyRef.current) {
+      console.error("Realtime response blocked: civic tools are not configured yet");
+      return false;
+    }
+
+    const forcedTool = selectTaipeiCivicTool(text);
+    const response: Record<string, any> = {
+      output_modalities: ["audio"],
+    };
+
+    if (forcedTool) {
+      response.tool_choice = {
+        type: "function",
+        name: forcedTool,
+      };
+
+      console.log("🏛️ Forced civic tool for this turn:", forcedTool);
+    }
+
+    return sendClientEvent(
+      {
+        type: "response.create",
+        response,
+      },
+      eventNameSuffix
+    );
+  };
+
   function sendWelcomeOnce() {
     if (hasSentWelcomeRef.current) return;
+
+    if (!sessionToolsReadyRef.current) {
+      console.warn("🚫 Welcome skipped: session tools are not ready");
+      return;
+    }
 
     const dc = dataChannelRef.current;
 
@@ -22803,6 +22865,8 @@ function AppContent() {
   async function connectToRealtime() {
     setSessionStatus("CONNECTING");
     hasSentWelcomeRef.current = false;
+    sessionToolsReadyRef.current = false;
+    setIsSessionConfigured(false);
 
     try {
       logClientEvent({ url: "/api/session" }, "fetch_session_token_request");
@@ -22915,9 +22979,17 @@ function AppContent() {
         console.log("🚀 Data channel opened - ready for conversation");
 
         window.setTimeout(() => {
-          if (!hasSentWelcomeRef.current && dataChannelRef.current?.readyState === "open") {
-            console.warn("⚠️ session.updated not observed yet; sending welcome fallback");
-            sendWelcomeOnce();
+          if (
+            !hasSentWelcomeRef.current &&
+            dataChannelRef.current?.readyState === "open"
+          ) {
+            if (sessionToolsReadyRef.current) {
+              sendWelcomeOnce();
+            } else {
+              console.error(
+                "❌ session.updated with required civic tools was not observed; refusing to answer without tools"
+              );
+            }
           }
         }, 2500);
       });
@@ -22953,7 +23025,30 @@ function AppContent() {
         console.log("📨 Event:", eventType);
 
         if (eventType === "session.updated") {
-          console.log("✅ Session updated, sending welcome once");
+          const effectiveToolNames = Array.isArray(eventData?.session?.tools)
+            ? eventData.session.tools
+                .map((tool: any) => tool?.name)
+                .filter((name: unknown): name is string => typeof name === "string")
+            : [];
+          const missingTools = APP_MANAGED_REALTIME_TOOL_NAMES.filter(
+            (name) => !effectiveToolNames.includes(name)
+          );
+
+          if (missingTools.length) {
+            sessionToolsReadyRef.current = false;
+            setIsSessionConfigured(false);
+            console.error("❌ Realtime session is missing required tools:", missingTools);
+            postLog({
+              role: "system",
+              content: `[SESSION CONFIG ERROR] missing tools: ${missingTools.join(", ")}`,
+              eventId: `session_tools_missing_${Date.now()}`,
+            });
+            return;
+          }
+
+          sessionToolsReadyRef.current = true;
+          setIsSessionConfigured(true);
+          console.log("✅ Session updated with civic tools:", effectiveToolNames);
           sendWelcomeOnce();
         }
 
@@ -22968,6 +23063,14 @@ function AppContent() {
             eventId,
             timestamp: Date.now(),
           };
+
+          if (!respondedAudioItemIdsRef.current.has(eventId)) {
+            respondedAudioItemIdsRef.current.add(eventId);
+            sendResponseForUserText(
+              normalized === "[inaudible]" ? "" : normalized,
+              "(trigger response after audio transcription)"
+            );
+          }
         }
 
         if (eventType === "conversation.item.created" || eventType === "conversation.item.added") {
@@ -22998,6 +23101,13 @@ function AppContent() {
             content: `[STT FAILED] ${String(reason).slice(0, 200)}`,
             eventId: eventData.item_id || `stt_fail_${Date.now()}`,
           });
+
+          const itemId = eventData.item_id || `stt_failed_${Date.now()}`;
+
+          if (!respondedAudioItemIdsRef.current.has(itemId)) {
+            respondedAudioItemIdsRef.current.add(itemId);
+            sendResponseForUserText("", "(trigger response after failed transcription)");
+          }
         }
 
         if (eventType === "response.created") {
@@ -23089,7 +23199,12 @@ function AppContent() {
         if (RESPONSE_DONE_EVENTS.includes(eventType)) {
           const outputItems = eventData?.response?.output || [];
           const functionCalls = Array.isArray(outputItems)
-            ? outputItems.filter((it: any) => it?.type === "function_call" && it?.call_id && it?.name)
+            ? outputItems.filter(
+                (it: any) =>
+                  it?.type === "function_call" &&
+                  it?.call_id &&
+                  isAppManagedRealtimeToolName(it?.name)
+              )
             : [];
 
           if (functionCalls.length) {
@@ -23115,7 +23230,7 @@ function AppContent() {
                         item: {
                           type: "function_call_output",
                           call_id: call.call_id,
-                          output: JSON.stringify(toolResult).slice(0, 20000),
+                          output: serializeRealtimeToolResult(toolResult),
                         },
                       },
                       `(tool output: ${call.name})`
@@ -23127,6 +23242,7 @@ function AppContent() {
                       type: "response.create",
                       response: {
                         output_modalities: ["audio"],
+                        tool_choice: "none",
                       },
                     },
                     "(trigger response after tools)"
@@ -23290,6 +23406,7 @@ function AppContent() {
           "response.audio.done",
           "response.output_item.added",
           "response.output_item.done",
+          "response.function_call_arguments.done",
           "response.done",
           "response.completed",
           "rate_limits.updated",
@@ -23370,8 +23487,11 @@ function AppContent() {
     }
 
     setSessionStatus("DISCONNECTED");
+    setIsSessionConfigured(false);
     setIsListening(false);
     hasSentWelcomeRef.current = false;
+    sessionToolsReadyRef.current = false;
+    respondedAudioItemIdsRef.current.clear();
     isOutputAudioBufferActiveRef.current = false;
 
     conversationState.current = {
@@ -23405,7 +23525,7 @@ function AppContent() {
           threshold: 0.65,
           prefix_padding_ms: 500,
           silence_duration_ms: 1000,
-          create_response: true,
+          create_response: false,
           interrupt_response: true,
         };
 
@@ -23491,7 +23611,17 @@ ${TAIPEI_COUNCILOR_TOOL_INSTRUCTIONS}
       },
     };
 
-    sendClientEvent(sessionUpdateEvent, "agent.tools + web_search + village_chief + councilors");
+    sessionToolsReadyRef.current = false;
+    setIsSessionConfigured(false);
+
+    const sent = sendClientEvent(
+      sessionUpdateEvent,
+      "agent.tools + web_search + village_chief + councilors"
+    );
+
+    if (!sent) {
+      console.error("❌ Failed to send session.update with civic tools");
+    }
   };
 
   const cancelAssistantSpeech = async () => {
@@ -23511,7 +23641,7 @@ ${TAIPEI_COUNCILOR_TOOL_INSTRUCTIONS}
   const handleSendTextMessage = () => {
     const textToSend = userText.trim();
 
-    if (!textToSend) return;
+    if (!textToSend || !sessionToolsReadyRef.current) return;
 
     cancelAssistantSpeech();
 
@@ -23537,21 +23667,18 @@ ${TAIPEI_COUNCILOR_TOOL_INSTRUCTIONS}
 
     setUserText("");
 
-    sendClientEvent(
-      {
-        type: "response.create",
-        response: {
-          output_modalities: ["audio"],
-        },
-      },
-      "(trigger response)"
-    );
+    sendResponseForUserText(textToSend, "(trigger response)");
   };
 
   const handleTalkButtonDown = () => {
     const dc = dataChannelRef.current;
 
-    if (sessionStatus !== "CONNECTED" || dc?.readyState !== "open") return;
+    if (
+      sessionStatus !== "CONNECTED" ||
+      dc?.readyState !== "open" ||
+      !sessionToolsReadyRef.current
+    )
+      return;
 
     cancelAssistantSpeech();
     setIsPTTUserSpeaking(true);
@@ -23569,16 +23696,6 @@ ${TAIPEI_COUNCILOR_TOOL_INSTRUCTIONS}
     setIsListening(false);
 
     sendClientEvent({ type: "input_audio_buffer.commit" }, "commit PTT");
-
-    sendClientEvent(
-      {
-        type: "response.create",
-        response: {
-          output_modalities: ["audio"],
-        },
-      },
-      "trigger response PTT"
-    );
   };
 
   const handleMicrophoneClick = () => {
@@ -23702,7 +23819,11 @@ ${TAIPEI_COUNCILOR_TOOL_INSTRUCTIONS}
           setUserText={setUserText}
           onSendMessage={handleSendTextMessage}
           downloadRecording={downloadRecording}
-          canSend={sessionStatus === "CONNECTED" && dataChannel?.readyState === "open"}
+          canSend={
+            sessionStatus === "CONNECTED" &&
+            dataChannel?.readyState === "open" &&
+            isSessionConfigured
+          }
           handleTalkButtonDown={handleTalkButtonDown}
           handleTalkButtonUp={handleTalkButtonUp}
           isPTTUserSpeaking={isPTTUserSpeaking}
@@ -23732,11 +23853,6 @@ function App() {
 }
 
 export default App;
-
-
-
-
-
 
 
 
