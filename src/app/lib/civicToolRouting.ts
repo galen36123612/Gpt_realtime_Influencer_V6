@@ -55,6 +55,68 @@ export function isAppManagedRealtimeToolName(
   );
 }
 
+function normalizeDistrictArgument(value: unknown) {
+  const compact = String(value ?? "")
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/^(?:台北市|臺北市)/, "");
+
+  return compact && !compact.endsWith("區") ? `${compact}區` : compact;
+}
+
+function normalizeVillageArgument(value: unknown) {
+  const compact = String(value ?? "")
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/^(?:台北市|臺北市)/, "")
+    .replace(/^[^區]+區/, "");
+
+  return compact && !compact.endsWith("里") ? `${compact}里` : compact;
+}
+
+function normalizeCouncilorNameArgument(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/^(?:(?:台北市|臺北市)?市?議員)/, "")
+    .replace(/市?議員$/, "");
+}
+
+/** Keeps model-generated arguments compatible with the exact local KB keys. */
+export function normalizeTaipeiCivicToolArguments(
+  toolName: unknown,
+  rawArguments: unknown
+): Record<string, unknown> {
+  const args =
+    rawArguments && typeof rawArguments === "object"
+      ? { ...(rawArguments as Record<string, unknown>) }
+      : {};
+
+  if (toolName === "lookup_taipei_village_chief") {
+    return {
+      ...args,
+      district: normalizeDistrictArgument(args.district),
+      village: normalizeVillageArgument(args.village),
+    };
+  }
+
+  if (toolName === "lookup_taipei_councilors") {
+    return {
+      ...args,
+      district: normalizeDistrictArgument(args.district),
+    };
+  }
+
+  if (toolName === "lookup_taipei_councilor_by_name") {
+    return {
+      ...args,
+      name: normalizeCouncilorNameArgument(args.name),
+    };
+  }
+
+  return args;
+}
+
 /**
  * Selects a civic lookup only when the current utterance contains enough
  * location/name evidence to avoid forcing the model to invent tool arguments.
