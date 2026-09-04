@@ -3,13 +3,9 @@ import test from "node:test";
 
 import {
   isAppManagedRealtimeToolName,
+  normalizeTaipeiCivicToolArguments,
   selectTaipeiCivicTool,
 } from "../src/app/lib/civicToolRouting.ts";
-import {
-  lookupCouncilorByName,
-  lookupCouncilorsByDistrict,
-} from "../src/app/data/councilors.ts";
-import { lookupVillageChief } from "../src/app/data/villageChiefs.ts";
 
 test("routes a complete village-chief request to the local lookup", () => {
   assert.equal(
@@ -46,12 +42,24 @@ test("recognizes only App-owned tool names", () => {
   assert.equal(isAppManagedRealtimeToolName("transferAgents"), false);
 });
 
-test("lookup normalization accepts common model argument variants", () => {
-  assert.equal(
-    lookupVillageChief("臺北市內湖區", "內湖區西湖里").found,
-    true
+test("normalizes common model argument variants before local lookup", () => {
+  assert.deepEqual(
+    normalizeTaipeiCivicToolArguments("lookup_taipei_village_chief", {
+      district: "臺北市內湖區",
+      village: "內湖區西湖里",
+    }),
+    { district: "內湖區", village: "西湖里" }
   );
-  assert.equal(lookupCouncilorsByDistrict("台北市內湖").found, true);
-  assert.equal(lookupCouncilorByName("苗博雅議員").found, true);
-  assert.equal(lookupCouncilorByName("臺北市議員 苗博雅").found, true);
+  assert.deepEqual(
+    normalizeTaipeiCivicToolArguments("lookup_taipei_councilors", {
+      district: "台北市內湖",
+    }),
+    { district: "內湖區" }
+  );
+  assert.deepEqual(
+    normalizeTaipeiCivicToolArguments("lookup_taipei_councilor_by_name", {
+      name: "臺北市議員 苗博雅",
+    }),
+    { name: "苗博雅" }
+  );
 });
