@@ -82,6 +82,20 @@ function normalizeCouncilorNameArgument(value: unknown) {
     .replace(/市?議員$/, "");
 }
 
+function normalizePartyArgument(value: unknown) {
+  const compact = String(value ?? "")
+    .trim()
+    .replace(/\s+/g, "");
+  const aliases: Record<string, string> = {
+    民進黨: "民主進步黨",
+    國民黨: "中國國民黨",
+    民眾黨: "台灣民眾黨",
+    社民黨: "社會民主黨",
+  };
+
+  return aliases[compact] || compact;
+}
+
 /** Keeps model-generated arguments compatible with the exact local KB keys. */
 export function normalizeTaipeiCivicToolArguments(
   toolName: unknown,
@@ -104,6 +118,7 @@ export function normalizeTaipeiCivicToolArguments(
     return {
       ...args,
       district: normalizeDistrictArgument(args.district),
+      party: normalizePartyArgument(args.party),
     };
   }
 
@@ -149,7 +164,7 @@ export function selectTaipeiCivicTool(
   );
   const asksCouncilorDetails =
     text.includes("議員") ||
-    /電話|email|信箱|聯絡|黨籍|選區|服務處|辦公室|哪一區|是誰/i.test(
+    /電話|email|信箱|聯絡|黨籍|選區|服務處|辦公室|哪一區|是誰|生日|年齡|幾歲|學歷|經歷|背景|政策|關注|合作|關係|互動|攻防/i.test(
       text
     );
 
@@ -157,12 +172,16 @@ export function selectTaipeiCivicTool(
     return "lookup_taipei_councilor_by_name";
   }
 
-  const asksCouncilorList = text.includes("議員");
+  const asksCouncilorList =
+    text.includes("議員") &&
+    /哪些|有誰|名單|所有|全部|幾位|最年輕|最年長|年齡|黨籍|民進黨|國民黨|民眾黨|社民黨|新黨|無黨籍|沈伯洋|合作|關係|互動|攻防/.test(
+      text
+    );
   const hasDistrict = TAIPEI_DISTRICTS.some((district) =>
     includesPlace(text, district, "區")
   );
 
-  if (asksCouncilorList && hasDistrict) {
+  if (asksCouncilorList || (text.includes("議員") && hasDistrict)) {
     return "lookup_taipei_councilors";
   }
 
