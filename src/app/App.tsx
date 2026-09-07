@@ -22745,7 +22745,7 @@ function AppContent() {
         response: {
           output_modalities: ["audio"],
           instructions:
-            "請你現在主動用繁體中文說一句非常簡短的開場白：『HI, 我是你的市長沈伯洋，請問今天想問些什麼？』說完就停下來等待使用者，不要繼續延伸。",
+            "請你現在主動用繁體中文說一句非常簡短的開場白：『你的市長沈伯洋向您問好！』說完就停下來等待使用者，不要繼續延伸。",
         },
       },
       "welcome.response_create"
