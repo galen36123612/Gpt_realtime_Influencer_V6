@@ -121,6 +121,7 @@ test("infers names and list filters from fragmented turns", () => {
 
 test("recognizes only App-owned tool names", () => {
   assert.equal(isAppManagedRealtimeToolName("web_search"), true);
+  assert.equal(isAppManagedRealtimeToolName("lookup_shen_media_kb"), true);
   assert.equal(
     isAppManagedRealtimeToolName("lookup_taipei_village_chief"),
     true

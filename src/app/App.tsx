@@ -22271,6 +22271,10 @@ import {
   normalizeTaipeiCivicToolArguments,
   selectTaipeiCivicTool,
 } from "@/app/lib/civicToolRouting";
+import {
+  inferShenMediaKBToolArguments,
+  selectShenMediaKBTool,
+} from "@/app/lib/shenMediaRouting";
 
 import {
   LOOKUP_TAIPEI_VILLAGE_CHIEF_TOOL,
@@ -22284,6 +22288,12 @@ import {
   TAIPEI_COUNCILOR_TOOL_INSTRUCTIONS,
   executeCouncilorTool,
 } from "@/app/data/councilors";
+
+import {
+  LOOKUP_SHEN_MEDIA_KB_TOOL,
+  SHEN_MEDIA_KB_TOOL_INSTRUCTIONS,
+  executeShenMediaKBTool,
+} from "@/app/data/shenMediaKB";
 
 type LogRole = "user" | "assistant" | "system" | "feedback";
 
@@ -22630,6 +22640,13 @@ function AppContent() {
       lastCivicQueryTurnsRef.current
     );
 
+    if (call.name === "lookup_shen_media_kb") {
+      args = inferShenMediaKBToolArguments(
+        args,
+        lastCivicQueryTurnsRef.current
+      );
+    }
+
     // ========================================================
     // Local Taipei Village Chief KB
     // ========================================================
@@ -22666,6 +22683,23 @@ function AppContent() {
       });
 
       return councilorResult.result;
+    }
+
+    // ========================================================
+    // Local Shen Campaign / Media KB
+    // ========================================================
+    const shenMediaResult = executeShenMediaKBTool(call.name, args);
+
+    if (shenMediaResult.handled) {
+      postLog({
+        role: "system",
+        content: `[LOCAL KB] tool=${call.name} query=${String(
+          args?.query || ""
+        )} result=${JSON.stringify(shenMediaResult.result).slice(0, 1000)}`,
+        eventId: `local_shen_media_kb_${call.call_id}`,
+      });
+
+      return shenMediaResult.result;
     }
 
     // ========================================================
@@ -22764,13 +22798,15 @@ function AppContent() {
 
   const sendResponseForUserText = (text: string, eventNameSuffix: string) => {
     if (!sessionToolsReadyRef.current) {
-      console.error("Realtime response blocked: civic tools are not configured yet");
+      console.error("Realtime response blocked: required tools are not configured yet");
       return false;
     }
 
     const previousTurns = recentUserTurnsRef.current.slice(-6);
     const queryTurns = [...previousTurns, text].filter(Boolean).slice(-7);
-    const forcedTool = selectTaipeiCivicTool(text, previousTurns);
+    const forcedTool =
+      selectShenMediaKBTool(text, previousTurns) ||
+      selectTaipeiCivicTool(text, previousTurns);
     const response: Record<string, any> = {
       output_modalities: ["audio"],
     };
@@ -22781,11 +22817,16 @@ function AppContent() {
         type: "function",
         name: forcedTool,
       };
-      response.instructions = `請結合最近的使用者對話理解查詢線索：${queryTurns.join(
-        " → "
-      )}。本回合直接呼叫 ${forcedTool}；姓名、行政區或里名即使是分多次說、可能有語音錯字，也先用現有線索查詢，不要先反覆追問。`;
+      response.instructions =
+        forcedTool === "lookup_shen_media_kb"
+          ? `請結合最近的使用者對話理解新聞、受訪、選戰或政策查詢：${queryTurns.join(
+              " → "
+            )}。本回合直接呼叫 lookup_shen_media_kb。query 只放核心人物／事件關鍵字；若使用者只說今天或昨天，請換算 dateFrom/dateTo，並依照 SHEN MEDIA LOCAL KB 的 freshness 規則設定 requiresLatest。不要先呼叫 web_search。`
+          : `請結合最近的使用者對話理解查詢線索：${queryTurns.join(
+              " → "
+            )}。本回合直接呼叫 ${forcedTool}；姓名、行政區或里名即使是分多次說、可能有語音錯字，也先用現有線索查詢，不要先反覆追問。`;
 
-      console.log("🏛️ Forced civic tool for this turn:", forcedTool);
+      console.log("🧭 Forced local tool for this turn:", forcedTool);
     }
 
     if (text) {
@@ -22851,7 +22892,7 @@ function AppContent() {
         };
 
         if (shouldFallbackToWeb) {
-          followUpResponse.instructions = `本地公職人員 KB 沒有完全相符或需要確認最新狀態。請直接用 web_search 搜尋官方來源與可信公開資料，不要再要求使用者補充相同資訊。最近查詢脈絡：${lastCivicQueryTurnsRef.current.join(
+          followUpResponse.instructions = `本地 KB 沒有完全相符，或使用者要求的時間晚於資料快照、需要確認最新狀態。請直接用 web_search 搜尋官方來源與可信公開資料，不要再要求使用者補充相同資訊。最近查詢脈絡：${lastCivicQueryTurnsRef.current.join(
             " → "
           )}`;
         }
@@ -23143,7 +23184,7 @@ function AppContent() {
 
           sessionToolsReadyRef.current = true;
           setIsSessionConfigured(true);
-          console.log("✅ Session updated with civic tools:", effectiveToolNames);
+          console.log("✅ Session updated with required tools:", effectiveToolNames);
           sendWelcomeOnce();
         }
 
@@ -23591,6 +23632,8 @@ ${TAIPEI_VILLAGE_CHIEF_TOOL_INSTRUCTIONS}
 
 ${TAIPEI_COUNCILOR_TOOL_INSTRUCTIONS}
 
+${SHEN_MEDIA_KB_TOOL_INSTRUCTIONS}
+
 # TOOL PRIORITY
 
 - 使用者問台北市里長、里長電話或里辦公處時，優先呼叫 lookup_taipei_village_chief。
@@ -23600,8 +23643,10 @@ ${TAIPEI_COUNCILOR_TOOL_INSTRUCTIONS}
 - 使用者直接問某位台北市議員的電話、Email、黨籍或選區時，優先呼叫 lookup_taipei_councilor_by_name。
 - 使用者問議員生日、年齡、背景、學經歷、政策或與沈伯洋的公開關係時，也必須使用本地 councilor tool；姓名可能有語音錯字時先查候選，不要反覆要求使用者補行政區。
 - 如果本地市議員資料找不到，或使用者特別要求「今天最新」「目前最新現任」，再呼叫 web_search，優先查臺北市議會或內政部地方公職人員資訊專區。
+- 使用者問沈伯洋已發生的選戰新聞、公開受訪、登記、政策發布、辯論、蔡英文公開互動或與蔣萬安相關攻防時，優先呼叫 lookup_shen_media_kb，不得直接跳到 web_search。
+- lookup_shen_media_kb 找到資料且 shouldVerifyLatest=false 時，直接依 Local KB 回答，不要再重複搜尋網路；只有 found=false、shouldSearchWeb=true 或 shouldVerifyLatest=true 才呼叫 web_search。
 - 當問題需要公司/內部文件或知識庫內容時，請先使用 file_search 檢索向量庫，並在回答中附上來源。
-- 當問題需要最新的外部資訊（新聞、價格、政策、版本更新）時，先呼叫 web_search，再用搜尋結果回答並附上來源。
+- 當問題需要本地 KB 快照之後的最新外部資訊（新聞、價格、政策、版本更新）時，再呼叫 web_search，並用搜尋結果回答、附上來源。
 - 不得用模型記憶猜里長姓名、里長電話、市議員姓名或聯絡方式。
 - 如果使用者語音聽起來不清楚、內容不完整、像背景音，或和目前對話脈絡明顯不相關，不要直接推銷或回答；請先說：「我剛剛沒有聽清楚，可以再說一次嗎？」
 - 如果轉錄看起來是英文短句，例如 Yeah、Why、Bye、way over there，但前後脈絡主要是中文，請優先判斷可能是誤辨識，先確認，不要直接結束對話或切到英文回覆。`;
@@ -23631,6 +23676,7 @@ ${TAIPEI_COUNCILOR_TOOL_INSTRUCTIONS}
       LOOKUP_TAIPEI_VILLAGE_CHIEF_TOOL,
       LOOKUP_TAIPEI_COUNCILORS_TOOL,
       LOOKUP_TAIPEI_COUNCILOR_BY_NAME_TOOL,
+      LOOKUP_SHEN_MEDIA_KB_TOOL,
     ];
     const toolMap = new Map<string, any>();
 
@@ -23674,11 +23720,11 @@ ${TAIPEI_COUNCILOR_TOOL_INSTRUCTIONS}
 
     const sent = sendClientEvent(
       sessionUpdateEvent,
-      "agent.tools + web_search + village_chief + councilors"
+      "agent.tools + web_search + village_chief + councilors + shen_media_kb"
     );
 
     if (!sent) {
-      console.error("❌ Failed to send session.update with civic tools");
+      console.error("❌ Failed to send session.update with required tools");
     }
   };
 
