@@ -920,6 +920,7 @@ import { useTranscript } from "@/app/contexts/TranscriptContext";
 import { useEvent } from "@/app/contexts/EventContext";
 import { runGuardrailClassifier } from "@/app/lib/callOai";
 import { isAppManagedRealtimeToolName } from "@/app/lib/civicToolRouting";
+import { resolveRealtimeAssistantItemId } from "@/app/lib/realtimeTranscriptIds";
 
 export interface UseHandleServerEventParams {
   setSessionStatus: (status: SessionStatus) => void;
@@ -954,10 +955,11 @@ export function useHandleServerEvent({
   const assistantDeltasRef = useRef<{ [itemId: string]: string }>({});
   const handledFunctionCallIdsRef = useRef<Set<string>>(new Set());
 
-  // Map response_id -> assistant output item id.
-  // GA Realtime 有些 delta 會帶 response_id，有些會帶 item_id/output_item_id。
-  // 先記住 mapping，避免用 response_id 建一個 bubble、又用 item_id 建另一個 bubble。
-  const responseItemIdByResponseIdRef = useRef<Record<string, string>>({});
+  // One response can emit transcript/content/output completion events. Pin
+  // every response output to one concrete item ID so they update one bubble.
+  const assistantItemIdsByResponseOutputRef = useRef<Record<string, string>>(
+    {}
+  );
 
   function transcriptItemExists(itemId?: string) {
     if (!itemId) return false;
@@ -967,14 +969,9 @@ export function useHandleServerEvent({
   }
 
   function resolveAssistantItemId(event: any): string | undefined {
-    return (
-      event.item_id ||
-      event.output_item_id ||
-      event.item?.id ||
-      (event.response_id
-        ? responseItemIdByResponseIdRef.current[event.response_id]
-        : undefined) ||
-      event.response_id
+    return resolveRealtimeAssistantItemId(
+      event,
+      assistantItemIdsByResponseOutputRef.current
     );
   }
 
@@ -1253,6 +1250,9 @@ export function useHandleServerEvent({
     switch (event.type) {
       case "session.created": {
         if (event.session?.id) {
+          assistantDeltasRef.current = {};
+          handledFunctionCallIdsRef.current.clear();
+          assistantItemIdsByResponseOutputRef.current = {};
           setSessionStatus("CONNECTED");
 
           // 不在這裡新增空白 welcome bubble。
@@ -1339,9 +1339,9 @@ export function useHandleServerEvent({
         const itemId = item?.id;
         const role = item?.role as TranscriptRole | undefined;
 
-        // 只記錄 response_id -> item_id，不建立空白 assistant bubble。
-        if (itemId && role === "assistant" && event.response_id) {
-          responseItemIdByResponseIdRef.current[event.response_id] = itemId;
+        // Register the concrete item ID, but do not create an empty bubble.
+        if (itemId && role === "assistant") {
+          resolveAssistantItemId(event);
         }
 
         break;
@@ -1407,8 +1407,9 @@ export function useHandleServerEvent({
 
       case "response.output_item.done": {
         const item = event.item;
-        const itemId = item?.id;
         const role = item?.role as TranscriptRole | undefined;
+        const itemId =
+          role === "assistant" ? resolveAssistantItemId(event) : item?.id;
         const text = extractTextFromContent(item?.content);
 
         if (itemId) {
@@ -1430,7 +1431,9 @@ export function useHandleServerEvent({
       case "response.done":
       case "response.completed": {
         if (event.response?.output) {
-          for (const outputItem of event.response.output as any[]) {
+          for (const [outputIndex, outputItem] of (
+            event.response.output as any[]
+          ).entries()) {
             if (
               outputItem.type === "function_call" &&
               outputItem.name &&
@@ -1452,7 +1455,11 @@ export function useHandleServerEvent({
             }
 
             if (outputItem.type === "message" && outputItem.role === "assistant") {
-              const itemId = outputItem.id;
+              const itemId = resolveAssistantItemId({
+                response_id: event.response.id,
+                output_index: outputIndex,
+                item: outputItem,
+              });
               const text = extractAssistantTextFromOutputItem(outputItem);
 
               if (itemId && text) {
