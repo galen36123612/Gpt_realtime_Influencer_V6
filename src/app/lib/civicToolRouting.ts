@@ -3,6 +3,7 @@ import { TAIPEI_VILLAGE_CHIEFS } from "../data/villageChiefs.ts";
 
 export const APP_MANAGED_REALTIME_TOOL_NAMES = [
   "web_search",
+  "lookup_shen_media_kb",
   "lookup_taipei_village_chief",
   "lookup_taipei_councilors",
   "lookup_taipei_councilor_by_name",
