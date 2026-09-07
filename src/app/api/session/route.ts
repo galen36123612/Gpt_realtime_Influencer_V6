@@ -152,6 +152,12 @@ import { randomUUID } from "crypto";
 
 export const runtime = "nodejs";
 
+// The active agent prompt is larger than the 32K context of legacy
+// gpt-realtime. Keep this configurable for deployments, but use a current
+// 128K-context Realtime model by default so the tool instructions are retained.
+const REALTIME_MODEL =
+  process.env.OPENAI_REALTIME_MODEL?.trim() || "gpt-realtime-2.1-mini";
+
 
 export async function GET() {
   try {
@@ -186,7 +192,7 @@ export async function GET() {
         },
         session: {
           type: "realtime",
-          model: "gpt-realtime",
+          model: REALTIME_MODEL,
 
           // instruction 交給 app.tsx / agentConfig 的 session.update 管理
           audio: {
@@ -206,7 +212,9 @@ export async function GET() {
                 threshold: 0.65,
                 prefix_padding_ms: 500,
                 silence_duration_ms: 1000,
-                create_response: true,
+                // App.tsx creates the response after transcription so it can
+                // force the correct civic lookup for the current utterance.
+                create_response: false,
 
                 // 這個一定要保留，才允許使用者語音插話時中斷模型回應
                 interrupt_response: true,
@@ -267,7 +275,7 @@ export async function GET() {
           value: data.value,
           expires_at: data.expires_at,
         },
-        model: data.session?.model || "gpt-realtime",
+        model: data.session?.model || REALTIME_MODEL,
         userId,
         sessionId,
       },
@@ -303,8 +311,6 @@ export async function GET() {
     );
   }
 }
-
-
 
 
 

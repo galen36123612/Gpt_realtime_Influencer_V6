@@ -6724,6 +6724,61 @@ function normalizeVillage(input: string) {
   return value.endsWith("里") ? value : `${value}里`;
 }
 
+function normalizeChiefName(input: string) {
+  return input
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/^(?:台北市|臺北市)/, "")
+    .replace(/^里長/, "")
+    .replace(/里長$/, "");
+}
+
+function editDistance(left: string, right: string) {
+  const rows = Array.from({ length: left.length + 1 }, () =>
+    Array<number>(right.length + 1).fill(0)
+  );
+
+  for (let i = 0; i <= left.length; i += 1) rows[i][0] = i;
+  for (let j = 0; j <= right.length; j += 1) rows[0][j] = j;
+
+  for (let i = 1; i <= left.length; i += 1) {
+    for (let j = 1; j <= right.length; j += 1) {
+      rows[i][j] = Math.min(
+        rows[i - 1][j] + 1,
+        rows[i][j - 1] + 1,
+        rows[i - 1][j - 1] + (left[i - 1] === right[j - 1] ? 0 : 1)
+      );
+    }
+  }
+
+  return rows[left.length][right.length];
+}
+
+function suggestVillageChiefs(nameInput: string, limit = 5) {
+  const name = normalizeChiefName(nameInput);
+
+  if (!name) return [];
+
+  return TAIPEI_VILLAGE_CHIEFS.map((item) => ({
+    item,
+    distance: editDistance(name, normalizeChiefName(item.name)),
+    sameSurname: item.name[0] === name[0],
+  }))
+    .filter(({ distance, sameSurname }) => distance <= 1 || sameSurname)
+    .sort(
+      (a, b) =>
+        Number(b.sameSurname) - Number(a.sameSurname) ||
+        a.distance - b.distance ||
+        a.item.name.localeCompare(b.item.name, "zh-Hant")
+    )
+    .slice(0, limit)
+    .map(({ item }) => ({
+      name: item.name,
+      district: item.district,
+      village: item.village,
+    }));
+}
+
 export function lookupVillageChief(district: string, village: string) {
   const normalizedDistrict = normalizeDistrict(district);
   const normalizedVillage = normalizeVillage(village);
@@ -6747,6 +6802,55 @@ export function lookupVillageChief(district: string, village: string) {
   return {
     found: true as const,
     data: match,
+  };
+}
+
+export function lookupVillageChiefByName(nameInput: string) {
+  const name = normalizeChiefName(nameInput);
+  const matches = TAIPEI_VILLAGE_CHIEFS.filter(
+    (item) => normalizeChiefName(item.name) === name
+  );
+
+  if (!matches.length) {
+    return {
+      found: false as const,
+      reason: "not_found" as const,
+      name,
+      suggestions: suggestVillageChiefs(name),
+      shouldSearchWeb: true,
+      message: "本地里長資料沒有完全相符的姓名，已提供可能候選並應查最新官方資料。",
+    };
+  }
+
+  return {
+    found: true as const,
+    matchType: "name" as const,
+    count: matches.length,
+    data: matches,
+  };
+}
+
+export function lookupVillageChiefsByVillage(villageInput: string) {
+  const village = normalizeVillage(villageInput);
+  const matches = TAIPEI_VILLAGE_CHIEFS.filter(
+    (item) => item.village === village
+  );
+
+  if (!matches.length) {
+    return {
+      found: false as const,
+      reason: "not_found" as const,
+      village,
+      shouldSearchWeb: true,
+      message: "本地里長資料沒有找到這個里名，應查最新官方資料。",
+    };
+  }
+
+  return {
+    found: true as const,
+    matchType: "village" as const,
+    count: matches.length,
+    data: matches,
   };
 }
 
@@ -6785,7 +6889,7 @@ export const LOOKUP_TAIPEI_VILLAGE_CHIEF_TOOL = {
   type: "function",
   name: "lookup_taipei_village_chief",
   description:
-    "查詢台北市指定行政區與里的現任里長，以及公開的里辦公室電話、手機與辦公處地址。使用者詢問里長時優先使用此工具。",
+    "用姓名、里名或行政區查詢台北市現任里長與公開聯絡資料。只要使用者提供其中一種線索就先查，不要要求一定要同時提供行政區與里名。",
   parameters: {
     type: "object",
     properties: {
@@ -6797,8 +6901,11 @@ export const LOOKUP_TAIPEI_VILLAGE_CHIEF_TOOL = {
         type: "string",
         description: "里名，例如：西湖里、龍泉里、天母里",
       },
+      name: {
+        type: "string",
+        description: "里長姓名或可能的姓名，例如：紀建漢",
+      },
     },
-    required: ["district", "village"],
     additionalProperties: false,
   },
 } as const;
@@ -6815,12 +6922,15 @@ export const TAIPEI_VILLAGE_CHIEF_TOOL_INSTRUCTIONS = `
 
 優先使用 lookup_taipei_village_chief。
 
-需要兩個欄位：
-- district：行政區
-- village：里名
+可以使用任何已知線索：
+- name：里長姓名
+- village：里名；即使不知道行政區，也先搜尋同名里
+- district + village：完整地點
+- district：列出該區名單
 
-如果使用者沒有提供行政區或里名，先詢問缺少的資訊。
-不知道里名時，可以請使用者提供附近公共地標或主要路口；不要要求完整門牌。
+使用者已提供姓名時，絕對不要再要求行政區或里名；先查姓名。
+拼法可能不準時也要先呼叫工具，工具會回傳候選並允許再查官方來源。
+只有完全沒有姓名、里名或行政區時，才簡短詢問一項線索；不要反覆追問。
 
 本地資料來源為「臺北市第14屆里長名冊（115年1月）」。
 
@@ -6855,19 +6965,43 @@ export function executeVillageChiefTool(toolName: string, args: any) {
 
   const district = String(args?.district || "").trim();
   const village = String(args?.village || "").trim();
+  const name = String(args?.name || "").trim();
 
-  if (!district || !village) {
+  let result:
+    | ReturnType<typeof lookupVillageChief>
+    | ReturnType<typeof lookupVillageChiefByName>
+    | ReturnType<typeof lookupVillageChiefsByVillage>
+    | {
+        found: true;
+        matchType: "district";
+        count: number;
+        data: TaipeiVillageChief[];
+      };
+
+  if (name) {
+    result = lookupVillageChiefByName(name);
+  } else if (district && village) {
+    result = lookupVillageChief(district, village);
+  } else if (village) {
+    result = lookupVillageChiefsByVillage(village);
+  } else if (district) {
+    const data = listVillageChiefsByDistrict(district);
+    result = {
+      found: true as const,
+      matchType: "district" as const,
+      count: data.length,
+      data,
+    };
+  } else {
     return {
       handled: true as const,
       result: {
         found: false as const,
-        reason: "missing_required_location" as const,
-        message: "查詢里長需要行政區與里名。",
+        reason: "missing_search_hint" as const,
+        message: "請提供里長姓名、里名或行政區其中一項。",
       },
     };
   }
-
-  const result = lookupVillageChief(district, village);
 
   if (!result.found) {
     return {
@@ -6881,13 +7015,20 @@ export function executeVillageChiefTool(toolName: string, args: any) {
     };
   }
 
+  const matchedChiefs = Array.isArray(result.data)
+    ? result.data
+    : [result.data];
+
   return {
     handled: true as const,
     result: {
       ...result,
-      source: result.data.source,
-      verifiedAt: result.data.verifiedAt,
-      shouldVerifyLatest: result.data.status !== "current",
+      source: matchedChiefs[0]?.source || TAIPEI_VILLAGE_CHIEF_META.source,
+      verifiedAt:
+        matchedChiefs[0]?.verifiedAt || TAIPEI_VILLAGE_CHIEF_META.verifiedAt,
+      shouldVerifyLatest: matchedChiefs.some(
+        (item) => item.status !== "current"
+      ),
     },
   };
 }
