@@ -22275,6 +22275,7 @@ import {
   inferShenMediaKBToolArguments,
   selectShenMediaKBTool,
 } from "@/app/lib/shenMediaRouting";
+import { createWelcomeResponseEvent } from "@/app/lib/welcomeResponse";
 
 import {
   LOOKUP_TAIPEI_VILLAGE_CHIEF_TOOL,
@@ -22937,17 +22938,7 @@ function AppContent() {
 
     hasSentWelcomeRef.current = true;
 
-    sendClientEvent(
-      {
-        type: "response.create",
-        response: {
-          output_modalities: ["audio"],
-          instructions:
-            "請你現在主動用繁體中文說一句非常簡短的開場白：『你的市長沈伯洋向您問好！』說完就停下來等待使用者，不要繼續延伸。",
-        },
-      },
-      "welcome.response_create"
-    );
+    sendClientEvent(createWelcomeResponseEvent(), "welcome.response_create");
   }
 
   const handleServerEventRef = useHandleServerEvent({

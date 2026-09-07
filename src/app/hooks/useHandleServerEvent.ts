@@ -921,6 +921,7 @@ import { useEvent } from "@/app/contexts/EventContext";
 import { runGuardrailClassifier } from "@/app/lib/callOai";
 import { isAppManagedRealtimeToolName } from "@/app/lib/civicToolRouting";
 import { resolveRealtimeAssistantItemId } from "@/app/lib/realtimeTranscriptIds";
+import { sanitizeWelcomeTranscript } from "@/app/lib/welcomeResponse";
 
 export interface UseHandleServerEventParams {
   setSessionStatus: (status: SessionStatus) => void;
@@ -1032,6 +1033,38 @@ export function useHandleServerEvent({
 
     if (wordCount > 0 && wordCount % 5 === 0) {
       processGuardrail(itemId, newAccumulated);
+    }
+  }
+
+  function commitAssistantText(
+    itemId: string,
+    rawText: string,
+    shouldRunGuardrail = false
+  ) {
+    const text = sanitizeWelcomeTranscript(rawText);
+
+    if (text === null) {
+      if (transcriptItemExists(itemId)) {
+        updateTranscriptMessage(itemId, "", false);
+        updateTranscriptItem(itemId, { status: "DONE", isHidden: true });
+      }
+      delete assistantDeltasRef.current[itemId];
+      return;
+    }
+
+    if (!text) return;
+
+    if (!transcriptItemExists(itemId)) {
+      addTranscriptMessage(itemId, "assistant", text);
+    } else {
+      updateTranscriptMessage(itemId, text, false);
+    }
+
+    assistantDeltasRef.current[itemId] = text;
+    updateTranscriptItem(itemId, { status: "DONE", isHidden: false });
+
+    if (shouldRunGuardrail) {
+      processGuardrail(itemId, text);
     }
   }
 
@@ -1377,14 +1410,7 @@ export function useHandleServerEvent({
         const transcript = event.transcript || event.text || "";
 
         if (itemId && transcript) {
-          if (!transcriptItemExists(itemId)) {
-            addTranscriptMessage(itemId, "assistant", transcript);
-          } else {
-            updateTranscriptMessage(itemId, transcript, false);
-          }
-
-          updateTranscriptItem(itemId, { status: "DONE" });
-          processGuardrail(itemId, transcript);
+          commitAssistantText(itemId, transcript, true);
         }
         break;
       }
@@ -1394,13 +1420,7 @@ export function useHandleServerEvent({
         const partText = extractTextFromContent(event.part);
 
         if (itemId && partText) {
-          if (!transcriptItemExists(itemId)) {
-            addTranscriptMessage(itemId, "assistant", partText);
-          } else {
-            updateTranscriptMessage(itemId, partText, false);
-          }
-
-          updateTranscriptItem(itemId, { status: "DONE" });
+          commitAssistantText(itemId, partText);
         }
         break;
       }
@@ -1414,16 +1434,10 @@ export function useHandleServerEvent({
 
         if (itemId) {
           if (role === "assistant" && text) {
-            if (!transcriptItemExists(itemId)) {
-              addTranscriptMessage(itemId, "assistant", text);
-            } else {
-              updateTranscriptMessage(itemId, text, false);
-            }
-
-            processGuardrail(itemId, text);
+            commitAssistantText(itemId, text, true);
+          } else {
+            updateTranscriptItem(itemId, { status: "DONE" });
           }
-
-          updateTranscriptItem(itemId, { status: "DONE" });
         }
         break;
       }
@@ -1463,14 +1477,7 @@ export function useHandleServerEvent({
               const text = extractAssistantTextFromOutputItem(outputItem);
 
               if (itemId && text) {
-                if (!transcriptItemExists(itemId)) {
-                  addTranscriptMessage(itemId, "assistant", text);
-                } else {
-                  updateTranscriptMessage(itemId, text, false);
-                }
-
-                updateTranscriptItem(itemId, { status: "DONE" });
-                processGuardrail(itemId, text);
+                commitAssistantText(itemId, text, true);
               }
             }
           }
