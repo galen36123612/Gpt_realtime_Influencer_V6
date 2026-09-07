@@ -1,3 +1,12 @@
+// 臺北市第14屆現任市議員 Local KB V2
+// Enriched: birthday / background / education / experience / policy focus / public relationship with 沈伯洋
+// Verified: 2026-09-03
+//
+// IMPORTANT:
+// 1. 「與沈伯洋的關係」只把可查證公開互動當作 confirmed。
+// 2. possibleCityHallCollaborationAreas 是依公開背景與議題推估，不是既有合作協議。
+// 3. 現任名單、黨籍與聯絡方式仍屬動態資料；若使用者問「最新」，應再查官方來源。
+
 export type TaipeiCouncilorStatus = "current" | "uncertain" | "former";
 
 export interface TaipeiCouncilorBase {
@@ -2721,7 +2730,57 @@ function normalizeDistrict(input: string) {
 }
 
 function normalizeName(input: string) {
-  return input.trim().replace(/\s+/g, "");
+  return input
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/^(?:(?:台北市|臺北市)?市?議員)/, "")
+    .replace(/市?議員$/, "");
+}
+
+function editDistance(left: string, right: string) {
+  const rows = Array.from({ length: left.length + 1 }, () =>
+    Array<number>(right.length + 1).fill(0)
+  );
+
+  for (let i = 0; i <= left.length; i += 1) rows[i][0] = i;
+  for (let j = 0; j <= right.length; j += 1) rows[0][j] = j;
+
+  for (let i = 1; i <= left.length; i += 1) {
+    for (let j = 1; j <= right.length; j += 1) {
+      rows[i][j] = Math.min(
+        rows[i - 1][j] + 1,
+        rows[i][j - 1] + 1,
+        rows[i - 1][j - 1] + (left[i - 1] === right[j - 1] ? 0 : 1)
+      );
+    }
+  }
+
+  return rows[left.length][right.length];
+}
+
+function suggestCouncilors(nameInput: string, limit = 5) {
+  const name = normalizeName(nameInput);
+
+  if (!name) return [];
+
+  return TAIPEI_COUNCILORS.map((item) => ({
+    item,
+    distance: editDistance(name, normalizeName(item.name)),
+    sameSurname: item.name[0] === name[0],
+  }))
+    .filter(({ distance, sameSurname }) => distance <= 1 || sameSurname)
+    .sort(
+      (a, b) =>
+        Number(b.sameSurname) - Number(a.sameSurname) ||
+        a.distance - b.distance ||
+        a.item.name.localeCompare(b.item.name, "zh-Hant")
+    )
+    .slice(0, limit)
+    .map(({ item }) => ({
+      name: item.name,
+      party: item.party,
+      districts: item.districts,
+    }));
 }
 
 function normalizeParty(input: string) {
@@ -2876,8 +2935,10 @@ export function lookupCouncilorByName(nameInput: string) {
       found: false as const,
       reason: "not_found" as const,
       name,
+      suggestions: suggestCouncilors(name),
+      shouldSearchWeb: true,
       message:
-        "本地市議員資料沒有找到這個名字，請改查最新官方資料。",
+        "本地現任市議員沒有完全相符的姓名，已提供可能候選並應查最新官方資料；不要反覆要求使用者補行政區。",
     };
   }
 

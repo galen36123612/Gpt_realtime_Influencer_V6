@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  inferTaipeiCivicToolArguments,
   isAppManagedRealtimeToolName,
   normalizeTaipeiCivicToolArguments,
   selectTaipeiCivicTool,
@@ -14,8 +15,15 @@ test("routes a complete village-chief request to the local lookup", () => {
   );
 });
 
-test("does not force a village lookup when the district is missing", () => {
-  assert.equal(selectTaipeiCivicTool("西湖里的里長是誰？"), null);
+test("uses the village KB without requiring both district and village", () => {
+  assert.equal(
+    selectTaipeiCivicTool("西湖里的里長是誰？"),
+    "lookup_taipei_village_chief"
+  );
+  assert.equal(
+    selectTaipeiCivicTool("紀建漢"),
+    "lookup_taipei_village_chief"
+  );
 });
 
 test("routes district and named-councilor requests separately", () => {
@@ -48,6 +56,69 @@ test("routes councilor age ranking and Shen relationship questions", () => {
   assert.equal(selectTaipeiCivicTool("市議員的職責是什麼？"), null);
 });
 
+test("routes fragmented civic questions using recent user turns", () => {
+  assert.equal(
+    selectTaipeiCivicTool("台北市議員", ["我想問王微紅生日"]),
+    "lookup_taipei_councilor_by_name"
+  );
+  assert.equal(
+    selectTaipeiCivicTool("王微", ["台北市議員"]),
+    "lookup_taipei_councilor_by_name"
+  );
+  assert.equal(
+    selectTaipeiCivicTool("里長", ["紀建漢"]),
+    "lookup_taipei_village_chief"
+  );
+  assert.equal(
+    selectTaipeiCivicTool("你就幫我查", ["里長 紀建漢"]),
+    "lookup_taipei_village_chief"
+  );
+});
+
+test("uses web search for an unknown person birthday instead of stalling", () => {
+  assert.equal(selectTaipeiCivicTool("我想問王微紅生日"), "web_search");
+});
+
+test("infers names and list filters from fragmented turns", () => {
+  assert.deepEqual(
+    inferTaipeiCivicToolArguments(
+      "lookup_taipei_village_chief",
+      {},
+      ["紀建漢", "里長"]
+    ),
+    { district: "", village: "", name: "紀建漢" }
+  );
+  assert.deepEqual(
+    inferTaipeiCivicToolArguments(
+      "lookup_taipei_councilor_by_name",
+      {},
+      ["我想問王微紅生日", "台北市議員"]
+    ),
+    { name: "王微紅" }
+  );
+  assert.deepEqual(
+    inferTaipeiCivicToolArguments(
+      "lookup_taipei_councilor_by_name",
+      {},
+      ["先問苗博雅", "改問黃瀞瑩"]
+    ),
+    { name: "黃瀞瑩" }
+  );
+  assert.deepEqual(
+    inferTaipeiCivicToolArguments(
+      "lookup_taipei_councilors",
+      {},
+      ["民進黨最年輕的台北市議員"]
+    ),
+    {
+      district: "",
+      party: "民主進步黨",
+      sortBy: "youngest_first",
+      limit: 1,
+    }
+  );
+});
+
 test("recognizes only App-owned tool names", () => {
   assert.equal(isAppManagedRealtimeToolName("web_search"), true);
   assert.equal(
@@ -63,7 +134,7 @@ test("normalizes common model argument variants before local lookup", () => {
       district: "臺北市內湖區",
       village: "內湖區西湖里",
     }),
-    { district: "內湖區", village: "西湖里" }
+    { district: "內湖區", village: "西湖里", name: "" }
   );
   assert.deepEqual(
     normalizeTaipeiCivicToolArguments("lookup_taipei_councilors", {

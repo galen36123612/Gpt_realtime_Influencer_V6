@@ -30,6 +30,8 @@ const TAIPEI_DISTRICTS = [
   "北投區",
 ] as const;
 
+const CIVIC_CONTEXT_MAX_TURNS = 6;
+
 function compactText(value: string) {
   return value
     .normalize("NFKC")
@@ -44,6 +46,81 @@ function includesPlace(text: string, place: string, suffix: "區" | "里") {
     : normalizedPlace;
 
   return text.includes(normalizedPlace) || text.includes(withoutSuffix);
+}
+
+function findKnownName(
+  text: string,
+  people: ReadonlyArray<{ name: string }>
+) {
+  return people.find(({ name }) => text.includes(compactText(name)))?.name || "";
+}
+
+function mostRecentKnownName(
+  turns: string[],
+  people: ReadonlyArray<{ name: string }>
+) {
+  for (const turn of [...turns].reverse()) {
+    const name = findKnownName(compactText(turn), people);
+    if (name) return name;
+  }
+
+  return "";
+}
+
+function mostRecentPlace(
+  turns: string[],
+  places: readonly string[],
+  suffix: "區" | "里"
+) {
+  for (const turn of [...turns].reverse()) {
+    const text = compactText(turn);
+    const place = places.find((item) => includesPlace(text, item, suffix));
+    if (place) return place;
+  }
+
+  return "";
+}
+
+function extractLikelyPersonName(value: string) {
+  let text = compactText(value);
+
+  text = text.replace(
+    /台北市|臺北市|現任|市議員|議員|里長|里辦公處|里辦公室|里辦|生日|出生日期|幾歲|年齡|電話|手機|email|信箱|聯絡方式|聯絡|黨籍|選區|服務處|辦公室|背景|學歷|經歷|政策|關注|職責|工作|做什麼|什麼|公開合作|合作|關係|互動|攻防|是誰|有誰|哪些|名單|所有|全部|幾位|最年輕|最年長|民主進步黨|中國國民黨|台灣民眾黨|社會民主黨|民進黨|國民黨|民眾黨|社民黨|新黨|無黨籍|沈伯洋|幫我查一下|幫我查|查一下|我想問|想問|請問|我要問|我問|告訴我|你就|的/gi,
+    ""
+  );
+
+  if (text.endsWith("區") || text.endsWith("里")) return "";
+  return /^[\p{Script=Han}]{2,4}$/u.test(text) ? text : "";
+}
+
+function mostRecentNameHint(turns: string[]) {
+  for (const turn of [...turns].reverse()) {
+    const text = compactText(turn);
+    const knownCouncilor = findKnownName(text, TAIPEI_COUNCILORS);
+    const knownVillageChief = findKnownName(text, TAIPEI_VILLAGE_CHIEFS);
+    const hint = knownCouncilor || knownVillageChief || extractLikelyPersonName(turn);
+
+    if (hint) return hint;
+  }
+
+  return "";
+}
+
+function civicDomainForTurn(turn: string): "councilor" | "village_chief" | null {
+  const text = compactText(turn);
+
+  if (
+    /里長|里辦公處|里辦公室|里辦/.test(text) ||
+    findKnownName(text, TAIPEI_VILLAGE_CHIEFS)
+  ) {
+    return "village_chief";
+  }
+
+  if (/市議員|議員/.test(text) || findKnownName(text, TAIPEI_COUNCILORS)) {
+    return "councilor";
+  }
+
+  return null;
 }
 
 export function isAppManagedRealtimeToolName(
@@ -82,6 +159,15 @@ function normalizeCouncilorNameArgument(value: unknown) {
     .replace(/市?議員$/, "");
 }
 
+function normalizeVillageChiefNameArgument(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/^(?:台北市|臺北市)/, "")
+    .replace(/^里長/, "")
+    .replace(/里長$/, "");
+}
+
 function normalizePartyArgument(value: unknown) {
   const compact = String(value ?? "")
     .trim()
@@ -111,6 +197,7 @@ export function normalizeTaipeiCivicToolArguments(
       ...args,
       district: normalizeDistrictArgument(args.district),
       village: normalizeVillageArgument(args.village),
+      name: normalizeVillageChiefNameArgument(args.name),
     };
   }
 
@@ -132,14 +219,103 @@ export function normalizeTaipeiCivicToolArguments(
   return args;
 }
 
+/** Fills tool arguments from recent turns when the user supplied details piecemeal. */
+export function inferTaipeiCivicToolArguments(
+  toolName: unknown,
+  rawArguments: unknown,
+  recentUserTurns: string[] = []
+): Record<string, unknown> {
+  const turns = recentUserTurns.slice(-CIVIC_CONTEXT_MAX_TURNS);
+  const context = compactText(turns.join(" "));
+  const args = normalizeTaipeiCivicToolArguments(toolName, rawArguments);
+
+  if (toolName === "lookup_taipei_village_chief") {
+    const knownChief = mostRecentKnownName(turns, TAIPEI_VILLAGE_CHIEFS);
+
+    if (!args.name) {
+      args.name = knownChief || mostRecentNameHint(turns);
+    }
+
+    if (!args.district) {
+      args.district = mostRecentPlace(turns, TAIPEI_DISTRICTS, "區");
+    }
+
+    if (!args.village) {
+      args.village = mostRecentPlace(
+        turns,
+        [...new Set(TAIPEI_VILLAGE_CHIEFS.map(({ village }) => village))],
+        "里"
+      );
+    }
+  }
+
+  if (toolName === "lookup_taipei_councilor_by_name" && !args.name) {
+    args.name =
+      mostRecentKnownName(turns, TAIPEI_COUNCILORS) ||
+      mostRecentNameHint(turns);
+  }
+
+  if (toolName === "lookup_taipei_councilors") {
+    if (!args.district) {
+      args.district = mostRecentPlace(turns, TAIPEI_DISTRICTS, "區");
+    }
+
+    if (!args.party) {
+      const parties = [
+        "民主進步黨",
+        "中國國民黨",
+        "台灣民眾黨",
+        "社會民主黨",
+        "無黨籍",
+        "新黨",
+        "民進黨",
+        "國民黨",
+        "民眾黨",
+        "社民黨",
+      ];
+      const partyMatch = [...turns]
+        .reverse()
+        .map((turn) => {
+          const turnText = compactText(turn);
+          return parties.find((party) => turnText.includes(compactText(party)));
+        })
+        .find(Boolean);
+
+      args.party = normalizePartyArgument(partyMatch);
+    }
+
+    if (!args.sortBy && context.includes("最年輕")) {
+      args.sortBy = "youngest_first";
+      args.limit ||= 1;
+    } else if (!args.sortBy && context.includes("最年長")) {
+      args.sortBy = "oldest_first";
+      args.limit ||= 1;
+    }
+
+    if (!args.relationshipLevel) {
+      if (/公開合作|合作過|競選合作/.test(context)) {
+        args.relationshipLevel = "confirmed_campaign_cooperation";
+      } else if (/政策攻防|公開攻防|對立/.test(context)) {
+        args.relationshipLevel = "public_policy_opposition";
+      } else if (/議題交集|公開議題/.test(context)) {
+        args.relationshipLevel = "confirmed_public_issue_overlap";
+      }
+    }
+  }
+
+  return args;
+}
+
 /**
  * Selects a civic lookup only when the current utterance contains enough
  * location/name evidence to avoid forcing the model to invent tool arguments.
  */
 export function selectTaipeiCivicTool(
-  userText: string
+  userText: string,
+  recentUserTurns: string[] = []
 ): AppManagedRealtimeToolName | null {
   const text = compactText(userText);
+  const recentTurns = recentUserTurns.slice(-CIVIC_CONTEXT_MAX_TURNS);
 
   if (!text) return null;
 
@@ -150,18 +326,12 @@ export function selectTaipeiCivicTool(
     text.includes("里辦");
 
   if (asksVillageChief) {
-    const hasCompleteLocation = TAIPEI_VILLAGE_CHIEFS.some(
-      ({ district, village }) =>
-        includesPlace(text, district, "區") &&
-        includesPlace(text, village, "里")
-    );
-
-    return hasCompleteLocation ? "lookup_taipei_village_chief" : null;
+    return "lookup_taipei_village_chief";
   }
 
-  const knownCouncilor = TAIPEI_COUNCILORS.find(({ name }) =>
-    text.includes(compactText(name))
-  );
+  const knownVillageChief = findKnownName(text, TAIPEI_VILLAGE_CHIEFS);
+
+  const knownCouncilor = findKnownName(text, TAIPEI_COUNCILORS);
   const asksCouncilorDetails =
     text.includes("議員") ||
     /電話|email|信箱|聯絡|黨籍|選區|服務處|辦公室|哪一區|是誰|生日|年齡|幾歲|學歷|經歷|背景|政策|關注|合作|關係|互動|攻防/i.test(
@@ -172,8 +342,13 @@ export function selectTaipeiCivicTool(
     return "lookup_taipei_councilor_by_name";
   }
 
+  if (knownVillageChief && !knownCouncilor) {
+    return "lookup_taipei_village_chief";
+  }
+
+  const asksCouncilor = /市議員|議員/.test(text);
   const asksCouncilorList =
-    text.includes("議員") &&
+    asksCouncilor &&
     /哪些|有誰|名單|所有|全部|幾位|最年輕|最年長|年齡|黨籍|民進黨|國民黨|民眾黨|社民黨|新黨|無黨籍|沈伯洋|合作|關係|互動|攻防/.test(
       text
     );
@@ -181,8 +356,40 @@ export function selectTaipeiCivicTool(
     includesPlace(text, district, "區")
   );
 
-  if (asksCouncilorList || (text.includes("議員") && hasDistrict)) {
+  // List/ranking/location intent must win before free-form name extraction.
+  // Otherwise phrases such as 「內湖區有哪些」 can be mistaken for a name.
+  if (asksCouncilorList || (asksCouncilor && hasDistrict)) {
     return "lookup_taipei_councilors";
+  }
+
+  if (asksCouncilor) {
+    const currentNameHint = extractLikelyPersonName(userText);
+    const previousNameHint = mostRecentNameHint(recentTurns);
+
+    if (knownCouncilor || currentNameHint || previousNameHint) {
+      return "lookup_taipei_councilor_by_name";
+    }
+  }
+
+  const recentDomain = [...recentTurns]
+    .reverse()
+    .map(civicDomainForTurn)
+    .find(Boolean);
+  const currentNameHint = extractLikelyPersonName(userText);
+  const isFollowUp =
+    Boolean(currentNameHint) ||
+    /^(?:你)?(?:就)?幫我查|^(?:那|這|對|是|沒錯|剛剛)/.test(text);
+
+  if (isFollowUp && recentDomain === "village_chief") {
+    return "lookup_taipei_village_chief";
+  }
+
+  if (isFollowUp && recentDomain === "councilor") {
+    return "lookup_taipei_councilor_by_name";
+  }
+
+  if (currentNameHint && /生日|出生日期|幾歲|年齡/.test(text)) {
+    return "web_search";
   }
 
   return null;

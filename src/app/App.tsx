@@ -22266,6 +22266,7 @@ import { allAgentSets, defaultAgentSetKey } from "@/app/agentConfigs";
 import useAudioDownload from "./hooks/useAudioDownload";
 import {
   APP_MANAGED_REALTIME_TOOL_NAMES,
+  inferTaipeiCivicToolArguments,
   isAppManagedRealtimeToolName,
   normalizeTaipeiCivicToolArguments,
   selectTaipeiCivicTool,
@@ -22361,6 +22362,8 @@ function AppContent() {
   const hasSentWelcomeRef = useRef(false);
   const sessionToolsReadyRef = useRef(false);
   const respondedAudioItemIdsRef = useRef<Set<string>>(new Set());
+  const recentUserTurnsRef = useRef<string[]>([]);
+  const lastCivicQueryTurnsRef = useRef<string[]>([]);
 
   const peerConnection = useRef<RTCPeerConnection | null>(null);
   const audioElement = useRef<HTMLAudioElement | null>(null);
@@ -22621,7 +22624,11 @@ function AppContent() {
       args = {};
     }
 
-    args = normalizeTaipeiCivicToolArguments(call.name, args);
+    args = inferTaipeiCivicToolArguments(
+      call.name,
+      normalizeTaipeiCivicToolArguments(call.name, args),
+      lastCivicQueryTurnsRef.current
+    );
 
     // ========================================================
     // Local Taipei Village Chief KB
@@ -22761,18 +22768,28 @@ function AppContent() {
       return false;
     }
 
-    const forcedTool = selectTaipeiCivicTool(text);
+    const previousTurns = recentUserTurnsRef.current.slice(-6);
+    const queryTurns = [...previousTurns, text].filter(Boolean).slice(-7);
+    const forcedTool = selectTaipeiCivicTool(text, previousTurns);
     const response: Record<string, any> = {
       output_modalities: ["audio"],
     };
 
     if (forcedTool) {
+      lastCivicQueryTurnsRef.current = queryTurns;
       response.tool_choice = {
         type: "function",
         name: forcedTool,
       };
+      response.instructions = `請結合最近的使用者對話理解查詢線索：${queryTurns.join(
+        " → "
+      )}。本回合直接呼叫 ${forcedTool}；姓名、行政區或里名即使是分多次說、可能有語音錯字，也先用現有線索查詢，不要先反覆追問。`;
 
       console.log("🏛️ Forced civic tool for this turn:", forcedTool);
+    }
+
+    if (text) {
+      recentUserTurnsRef.current = [...previousTurns, text].slice(-6);
     }
 
     return sendClientEvent(
@@ -22782,6 +22799,84 @@ function AppContent() {
       },
       eventNameSuffix
     );
+  };
+
+  const processAppManagedToolCalls = (functionCalls: any[]) => {
+    const callsToProcess = functionCalls.filter(
+      (call: any) =>
+        call?.call_id &&
+        isAppManagedRealtimeToolName(call?.name) &&
+        !processedToolCallIds.current.has(call.call_id)
+    );
+
+    if (!callsToProcess.length) return false;
+
+    callsToProcess.forEach((call: any) =>
+      processedToolCallIds.current.add(call.call_id)
+    );
+
+    void (async () => {
+      try {
+        let shouldFallbackToWeb = false;
+
+        for (const call of callsToProcess) {
+          console.log("🛠️ Executing tool:", call.name, call.call_id);
+
+          const toolResult: any = await executeRealtimeTool(call);
+
+          console.log("✅ Tool result:", call.name, toolResult);
+          shouldFallbackToWeb ||= Boolean(
+            call.name !== "web_search" &&
+              (toolResult?.shouldSearchWeb || toolResult?.shouldVerifyLatest)
+          );
+
+          sendClientEvent(
+            {
+              type: "conversation.item.create",
+              item: {
+                type: "function_call_output",
+                call_id: call.call_id,
+                output: serializeRealtimeToolResult(toolResult),
+              },
+            },
+            `(tool output: ${call.name})`
+          );
+        }
+
+        const followUpResponse: Record<string, any> = {
+          output_modalities: ["audio"],
+          tool_choice: shouldFallbackToWeb
+            ? { type: "function", name: "web_search" }
+            : "none",
+        };
+
+        if (shouldFallbackToWeb) {
+          followUpResponse.instructions = `本地公職人員 KB 沒有完全相符或需要確認最新狀態。請直接用 web_search 搜尋官方來源與可信公開資料，不要再要求使用者補充相同資訊。最近查詢脈絡：${lastCivicQueryTurnsRef.current.join(
+            " → "
+          )}`;
+        }
+
+        sendClientEvent(
+          {
+            type: "response.create",
+            response: followUpResponse,
+          },
+          shouldFallbackToWeb
+            ? "(fallback web search after local KB)"
+            : "(trigger response after tools)"
+        );
+      } catch (err) {
+        console.error("💥 Tool execution failed:", err);
+
+        postLog({
+          role: "system",
+          content: `[TOOL FAILED] ${String(err).slice(0, 300)}`,
+          eventId: `tool_fail_${Date.now()}`,
+        });
+      }
+    })();
+
+    return true;
   };
 
   function sendWelcomeOnce() {
@@ -23052,6 +23147,14 @@ function AppContent() {
           sendWelcomeOnce();
         }
 
+        if (
+          eventType === "response.function_call_arguments.done" &&
+          eventData?.call_id &&
+          isAppManagedRealtimeToolName(eventData?.name)
+        ) {
+          processAppManagedToolCalls([eventData]);
+        }
+
         if (eventType === "conversation.item.input_audio_transcription.completed") {
           const raw = eventData.transcript || eventData.text || "";
           const normalized = raw && raw.trim() && raw.trim() !== "\n" ? raw.trim() : "[inaudible]";
@@ -23208,56 +23311,7 @@ function AppContent() {
             : [];
 
           if (functionCalls.length) {
-            const callsToProcess = functionCalls.filter(
-              (c: any) => !processedToolCallIds.current.has(c.call_id)
-            );
-
-            if (callsToProcess.length) {
-              callsToProcess.forEach((c: any) => processedToolCallIds.current.add(c.call_id));
-
-              void (async () => {
-                try {
-                  for (const call of callsToProcess) {
-                    console.log("🛠️ Executing tool:", call.name, call.call_id);
-
-                    const toolResult = await executeRealtimeTool(call);
-
-                    console.log("✅ Tool result:", call.name, toolResult);
-
-                    sendClientEvent(
-                      {
-                        type: "conversation.item.create",
-                        item: {
-                          type: "function_call_output",
-                          call_id: call.call_id,
-                          output: serializeRealtimeToolResult(toolResult),
-                        },
-                      },
-                      `(tool output: ${call.name})`
-                    );
-                  }
-
-                  sendClientEvent(
-                    {
-                      type: "response.create",
-                      response: {
-                        output_modalities: ["audio"],
-                        tool_choice: "none",
-                      },
-                    },
-                    "(trigger response after tools)"
-                  );
-                } catch (err) {
-                  console.error("💥 Tool execution failed:", err);
-
-                  postLog({
-                    role: "system",
-                    content: `[TOOL FAILED] ${String(err).slice(0, 300)}`,
-                    eventId: `tool_fail_${Date.now()}`,
-                  });
-                }
-              })();
-            }
+            processAppManagedToolCalls(functionCalls);
 
             conversationState.current.currentAssistantResponse = {
               isActive: false,
@@ -23492,6 +23546,8 @@ function AppContent() {
     hasSentWelcomeRef.current = false;
     sessionToolsReadyRef.current = false;
     respondedAudioItemIdsRef.current.clear();
+    recentUserTurnsRef.current = [];
+    lastCivicQueryTurnsRef.current = [];
     isOutputAudioBufferActiveRef.current = false;
 
     conversationState.current = {
@@ -23538,9 +23594,11 @@ ${TAIPEI_COUNCILOR_TOOL_INSTRUCTIONS}
 # TOOL PRIORITY
 
 - 使用者問台北市里長、里長電話或里辦公處時，優先呼叫 lookup_taipei_village_chief。
+- 使用者只提供里長姓名、只提供里名、或把姓名分成多回合說時，也要先呼叫 lookup_taipei_village_chief；不要堅持索取完整「行政區＋里名」。
 - 如果本地里長資料找不到、是代理/特殊狀態，或使用者特別問「最新」「現在現任」，再呼叫 web_search 查最新官方資料。
 - 使用者問某行政區有哪些台北市議員時，優先呼叫 lookup_taipei_councilors。
 - 使用者直接問某位台北市議員的電話、Email、黨籍或選區時，優先呼叫 lookup_taipei_councilor_by_name。
+- 使用者問議員生日、年齡、背景、學經歷、政策或與沈伯洋的公開關係時，也必須使用本地 councilor tool；姓名可能有語音錯字時先查候選，不要反覆要求使用者補行政區。
 - 如果本地市議員資料找不到，或使用者特別要求「今天最新」「目前最新現任」，再呼叫 web_search，優先查臺北市議會或內政部地方公職人員資訊專區。
 - 當問題需要公司/內部文件或知識庫內容時，請先使用 file_search 檢索向量庫，並在回答中附上來源。
 - 當問題需要最新的外部資訊（新聞、價格、政策、版本更新）時，先呼叫 web_search，再用搜尋結果回答並附上來源。
@@ -23853,8 +23911,3 @@ function App() {
 }
 
 export default App;
-
-
-
-
-

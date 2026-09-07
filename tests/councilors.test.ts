@@ -38,6 +38,14 @@ test("returns an enriched named-councilor profile", () => {
   assert.ok(result.data[0]?.backgroundSummary);
 });
 
+test("returns candidates and requests automatic web fallback for a name typo", () => {
+  const result = lookupCouncilorByName("苗博亞");
+
+  assert.equal(result.found, false);
+  assert.equal(result.shouldSearchWeb, true);
+  assert.equal(result.suggestions[0]?.name, "苗博雅");
+});
+
 test("calculates age at the birthday boundary", () => {
   assert.equal(calculateAge("1992-06-10", new Date(2026, 5, 9)), 33);
   assert.equal(calculateAge("1992-06-10", new Date(2026, 5, 10)), 34);
