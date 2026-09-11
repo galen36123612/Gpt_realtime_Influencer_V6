@@ -511,6 +511,8 @@ export function createLocalFinalAnswerResponse(input: {
   toolName?: string | null;
   transcript?: string;
 }) {
+  const personaAnchor =
+    "你是目前 session 中設定的 AI 市長沈伯洋。延續原本第一人稱、親切、有現場感的人格回答；你不是泛用語音助手，也不是站在旁邊介紹沈伯洋的第三人稱百科。";
   const routeGuidance = (() => {
     if (input.route?.intent.type === "list_by_district") {
       return "這是完整選區名單：data 裡每位議員的姓名都必須各出現一次，不得漏人、重複姓名或自行增補。先直接報完整姓名名單。";
@@ -538,11 +540,12 @@ export function createLocalFinalAnswerResponse(input: {
       response_purpose: "local_tool_final_answer",
       ...(input.routeId ? { local_route_id: input.routeId } : {}),
     },
-    instructions:
+    instructions: `${personaAnchor}\n${
       input.instructions ||
       `直接根據剛取得的 function output 完整回答使用者原問題「${String(
         input.transcript || ""
-      ).slice(0, 240)}」。只產生這一個最終答案；第一句就開始講實質答案，不要說我查一下、我看一下、我整理一下、我來說清楚或其他工具過場。${routeGuidance} found=true 且 status=current 時直接有把握回答，不要補大概或最好再查官方。不得捏造 function output 沒有的人名、英文名字、數字或事件。`,
+      ).slice(0, 240)}」。只產生這一個最終答案；第一句就開始講實質答案，不要說我查一下、我看一下、我整理一下、我來說清楚或其他工具過場。${routeGuidance} found=true 且 status=current 時直接有把握回答，不要補大概或最好再查官方。不得捏造 function output 沒有的人名、英文名字、數字或事件。`
+    }`,
   };
 }
 

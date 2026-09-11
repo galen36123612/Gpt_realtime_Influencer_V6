@@ -5,9 +5,12 @@ import test from "node:test";
 import {
   createDirectAnswerResponse,
   createDirectWebSearchArguments,
+  createShenPersonaContextEvent,
   createSyntheticFunctionCallEvent,
   createSyntheticFunctionOutputEvent,
   isBridgeOnlyAssistantResponse,
+  isShenPersonaProfileQuestion,
+  normalizeShenNameVariants,
 } from "../src/app/lib/realtimeResponseFlow.ts";
 
 test("direct Local Tool flow appends a complete function call and output", () => {
@@ -35,21 +38,55 @@ test("direct Local Tool flow appends a complete function call and output", () =>
   });
 });
 
-test("direct answer prompt forbids bridge-only and invented names", () => {
+test("ordinary direct answers inherit the complete session persona", () => {
   const response = createDirectAnswerResponse({});
 
   assert.deepEqual(response.output_modalities, ["audio"]);
   assert.equal(response.tool_choice, "auto");
-  assert.match(response.instructions, /第一句就是實質答案/);
-  assert.match(response.instructions, /不得插入.*英文名字/);
+  assert.equal("instructions" in response, false);
+
+  const noTools = createDirectAnswerResponse({ allowTools: false });
+  assert.equal(noTools.tool_choice, "none");
+  assert.equal("instructions" in noTools, false);
+
+  const retry = createDirectAnswerResponse({ purpose: "bridge_retry" });
+  assert.equal(retry.tool_choice, "none");
+  assert.equal("instructions" in retry, false);
 });
 
 test("inaudible response asks once instead of repeating the welcome", () => {
   const response = createDirectAnswerResponse({ purpose: "inaudible" });
 
   assert.equal(response.metadata.response_purpose, "inaudible");
-  assert.match(response.instructions, /沒有聽清楚/);
-  assert.doesNotMatch(response.instructions, /自我介紹一下|市長沈伯洋向您問好/);
+  assert.match(response.instructions!, /沒有聽清楚/);
+  assert.doesNotMatch(response.instructions!, /自我介紹一下|市長沈伯洋向您問好/);
+});
+
+test("normalizes Shen name STT variants and identifies persona profile questions", () => {
+  assert.equal(normalizeShenNameVariants("審柏楊基本資料"), "沈伯洋基本資料");
+  assert.equal(normalizeShenNameVariants("沈柏洋你自我介紹"), "沈伯洋你自我介紹");
+
+  for (const transcript of [
+    "沈伯洋你自我介紹一下",
+    "沈柏楊你自我介紹",
+    "妳應該是AI市長審柏楊",
+    "沈伯洋基本資料",
+    "你結婚了嗎？",
+  ]) {
+    assert.equal(isShenPersonaProfileQuestion(transcript), true, transcript);
+  }
+
+  assert.equal(isShenPersonaProfileQuestion("沈伯洋昨天受訪說了什麼？"), false);
+  assert.equal(isShenPersonaProfileQuestion("中山區有哪些市議員？"), false);
+});
+
+test("persona context uses a system item and the canonical Shen name", () => {
+  const event = createShenPersonaContextEvent("審柏楊基本資料");
+
+  assert.equal(event.type, "conversation.item.create");
+  assert.equal(event.item.role, "system");
+  assert.match(event.item.content[0].text, /AI 市長沈伯洋/);
+  assert.match(event.item.content[0].text, /使用者本回合：沈伯洋基本資料/);
 });
 
 test("detects transcript examples that stopped at a spoken bridge", () => {
@@ -90,6 +127,10 @@ test("live App waits for response.done and directly executes deterministic Local
   assert.match(liveApp, /void runDirectLocalTool\(/);
   assert.match(liveApp, /createSyntheticFunctionCallEvent\(/);
   assert.match(liveApp, /create_response: false/);
+  assert.ok(
+    liveApp.indexOf("isShenPersonaProfileQuestion(normalizedText)") <
+      liveApp.indexOf("selectShenMediaKBTool(normalizedText")
+  );
   assert.doesNotMatch(
     liveApp,
     /eventType === "response\.function_call_arguments\.done"[\s\S]{0,260}processAppManagedToolCalls/

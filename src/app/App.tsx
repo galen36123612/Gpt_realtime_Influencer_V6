@@ -22287,9 +22287,12 @@ import type { CouncilorRealtimeRoute } from "@/app/lib/councilorRealtimeRouter";
 import {
   createDirectAnswerResponse,
   createDirectWebSearchArguments,
+  createShenPersonaContextEvent,
   createSyntheticFunctionCallEvent,
   createSyntheticFunctionOutputEvent,
   isBridgeOnlyAssistantResponse,
+  isShenPersonaProfileQuestion,
+  normalizeShenNameVariants,
 } from "@/app/lib/realtimeResponseFlow";
 import { createWelcomeResponseEvent } from "@/app/lib/welcomeResponse";
 
@@ -22964,33 +22967,17 @@ function AppContent() {
       return false;
     }
 
+    const normalizedText = normalizeShenNameVariants(text);
     const previousTurns = recentUserTurnsRef.current.slice(-6);
-    const queryTurns = [...previousTurns, text].filter(Boolean).slice(-7);
-    const councilorDecision = routeCouncilorTranscript(
-      text,
-      localConversationContextRef.current
-    );
-    localConversationContextRef.current = councilorDecision.context;
-
-    const councilorRoute = councilorDecision.route;
-    const fallbackTool = councilorRoute
-      ? null
-      : selectShenMediaKBTool(text, previousTurns) ||
-        selectTaipeiCivicTool(text, previousTurns);
-    const forcedTool = councilorRoute?.forcedTool || fallbackTool;
-    const routeId = `local_route_${Date.now()}_${Math.random()
-      .toString(36)
-      .slice(2)}`;
-
-    if (councilorRoute || forcedTool) {
-      lastCivicQueryTurnsRef.current = queryTurns;
-    }
+    const queryTurns = [...previousTurns, normalizedText]
+      .filter(Boolean)
+      .slice(-7);
 
     if (text) {
-      recentUserTurnsRef.current = [...previousTurns, text].slice(-6);
+      recentUserTurnsRef.current = [...previousTurns, normalizedText].slice(-6);
     }
 
-    if (!text.trim()) {
+    if (!normalizedText.trim()) {
       pendingLocalRouteRef.current = null;
       return sendClientEvent(
         {
@@ -22999,6 +22986,41 @@ function AppContent() {
         },
         `${eventNameSuffix} (inaudible clarification)`
       );
+    }
+
+    if (isShenPersonaProfileQuestion(normalizedText)) {
+      pendingLocalRouteRef.current = null;
+      sendClientEvent(
+        createShenPersonaContextEvent(normalizedText),
+        `${eventNameSuffix} (AI mayor persona context)`
+      );
+      return sendClientEvent(
+        {
+          type: "response.create",
+          response: createDirectAnswerResponse({ allowTools: false }),
+        },
+        `${eventNameSuffix} (AI mayor persona answer)`
+      );
+    }
+
+    const councilorDecision = routeCouncilorTranscript(
+      normalizedText,
+      localConversationContextRef.current
+    );
+    localConversationContextRef.current = councilorDecision.context;
+
+    const councilorRoute = councilorDecision.route;
+    const fallbackTool = councilorRoute
+      ? null
+      : selectShenMediaKBTool(normalizedText, previousTurns) ||
+        selectTaipeiCivicTool(normalizedText, previousTurns);
+    const forcedTool = councilorRoute?.forcedTool || fallbackTool;
+    const routeId = `local_route_${Date.now()}_${Math.random()
+      .toString(36)
+      .slice(2)}`;
+
+    if (councilorRoute || forcedTool) {
+      lastCivicQueryTurnsRef.current = queryTurns;
     }
 
     if (councilorRoute?.cacheHit) {
@@ -23959,7 +23981,9 @@ ${SHEN_MEDIA_KB_TOOL_INSTRUCTIONS}
 - 不得只播放回答預告就停止；每個使用者問題必須在同一個 final response 裡回答完。
 - 地區議員名單必須逐字依 Tool data 回答，每個姓名一次，不得漏人、重複或自行補人。
 - 不得插入使用者與可靠資料中沒有的英文人名、例子、數字或事件。
-- 以 AI 市長角色回答政策支持或採納時，說明政策判準與可能方向，並區分正式承諾；不要退回泛稱自己只是語音助手而拒絕回答。`;
+- 以 AI 市長角色回答政策支持或採納時，說明政策判準與可能方向，並區分正式承諾；不要退回泛稱自己只是語音助手而拒絕回答。
+- 「沈柏楊／審柏楊／沈柏洋」等常見語音轉錄異體都指沈伯洋；不要因此否認 AI 市長身分。
+- 自我介紹、基本資料、生日、學經歷、婚姻與家庭問題屬於 MY PROFILE 人物題，直接依 Fact Bank 用第一人稱回答，不要誤送近期 Media KB。`;
 
     const webSearchTool = {
       type: "function",

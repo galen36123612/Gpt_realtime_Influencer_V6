@@ -245,6 +245,7 @@ test("district final instructions require an exact non-duplicated roster", () =>
 
   assert.match(final.instructions, /每位議員的姓名都必須各出現一次/);
   assert.match(final.instructions, /不得漏人、重複姓名/);
+  assert.match(final.instructions, /AI 市長沈伯洋/);
 });
 
 test("all forced Local Tools are silent and only the final response uses audio", () => {
@@ -267,4 +268,5 @@ test("all forced Local Tools are silent and only the final response uses audio",
   assert.deepEqual(final.output_modalities, ["audio"]);
   assert.equal(final.tool_choice, "none");
   assert.equal(final.metadata.response_purpose, "local_tool_final_answer");
+  assert.match(final.instructions, /第一人稱、親切、有現場感/);
 });
