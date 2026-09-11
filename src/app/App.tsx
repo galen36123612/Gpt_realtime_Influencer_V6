@@ -22275,6 +22275,20 @@ import {
   inferShenMediaKBToolArguments,
   selectShenMediaKBTool,
 } from "@/app/lib/shenMediaRouting";
+import {
+  createCachedCouncilorFinalResponse,
+  createCouncilorRouterLog,
+  createInitialLocalConversationContext,
+  createLocalFinalAnswerResponse,
+  createSilentLocalToolResponse,
+  routeCouncilorTranscript,
+  updateCouncilorContextFromResult,
+} from "@/app/lib/councilorRealtimeRouter";
+import type { CouncilorRealtimeRoute } from "@/app/lib/councilorRealtimeRouter";
+import {
+  isShenPersonaProfileQuestion,
+  normalizeShenNameVariants,
+} from "@/app/lib/personaRouting";
 import { createWelcomeResponseEvent } from "@/app/lib/welcomeResponse";
 
 import {
@@ -22297,6 +22311,15 @@ import {
 } from "@/app/data/shenMediaKB";
 
 type LogRole = "user" | "assistant" | "system" | "feedback";
+
+interface PendingLocalRoute {
+  routeId: string;
+  transcript: string;
+  startedAt: number;
+  forcedTool: string | null;
+  route: CouncilorRealtimeRoute | null;
+  toolLatencyMs?: number;
+}
 
 const MAX_REALTIME_TOOL_OUTPUT_CHARS = 60000;
 
@@ -22375,6 +22398,10 @@ function AppContent() {
   const respondedAudioItemIdsRef = useRef<Set<string>>(new Set());
   const recentUserTurnsRef = useRef<string[]>([]);
   const lastCivicQueryTurnsRef = useRef<string[]>([]);
+  const localConversationContextRef = useRef(
+    createInitialLocalConversationContext()
+  );
+  const pendingLocalRouteRef = useRef<PendingLocalRoute | null>(null);
 
   const peerConnection = useRef<RTCPeerConnection | null>(null);
   const audioElement = useRef<HTMLAudioElement | null>(null);
@@ -22635,11 +22662,26 @@ function AppContent() {
       args = {};
     }
 
-    args = inferTaipeiCivicToolArguments(
-      call.name,
-      normalizeTaipeiCivicToolArguments(call.name, args),
-      lastCivicQueryTurnsRef.current
-    );
+    const toolStartedAt = performance.now();
+    const deterministicRoute = pendingLocalRouteRef.current?.route;
+
+    if (
+      deterministicRoute?.forcedTool &&
+      deterministicRoute.forcedTool === call.name
+    ) {
+      // The transcript router owns Councilor arguments. Model-generated
+      // arguments cannot re-introduce a stale district or wrong detail mode.
+      args = normalizeTaipeiCivicToolArguments(
+        call.name,
+        deterministicRoute.args
+      );
+    } else {
+      args = inferTaipeiCivicToolArguments(
+        call.name,
+        normalizeTaipeiCivicToolArguments(call.name, args),
+        lastCivicQueryTurnsRef.current
+      );
+    }
 
     if (call.name === "lookup_shen_media_kb") {
       args = inferShenMediaKBToolArguments(
@@ -22654,6 +22696,11 @@ function AppContent() {
     const villageChiefResult = executeVillageChiefTool(call.name, args);
 
     if (villageChiefResult.handled) {
+      if (pendingLocalRouteRef.current) {
+        pendingLocalRouteRef.current.toolLatencyMs = Math.round(
+          performance.now() - toolStartedAt
+        );
+      }
       postLog({
         role: "system",
         content: `[LOCAL KB] tool=${call.name} district=${String(
@@ -22673,6 +22720,17 @@ function AppContent() {
     const councilorResult = executeCouncilorTool(call.name, args);
 
     if (councilorResult.handled) {
+      localConversationContextRef.current = updateCouncilorContextFromResult(
+        localConversationContextRef.current,
+        councilorResult.result
+      );
+
+      if (pendingLocalRouteRef.current) {
+        pendingLocalRouteRef.current.toolLatencyMs = Math.round(
+          performance.now() - toolStartedAt
+        );
+      }
+
       postLog({
         role: "system",
         content: `[LOCAL KB] tool=${call.name} district=${String(
@@ -22692,6 +22750,11 @@ function AppContent() {
     const shenMediaResult = executeShenMediaKBTool(call.name, args);
 
     if (shenMediaResult.handled) {
+      if (pendingLocalRouteRef.current) {
+        pendingLocalRouteRef.current.toolLatencyMs = Math.round(
+          performance.now() - toolStartedAt
+        );
+      }
       postLog({
         role: "system",
         content: `[LOCAL KB] tool=${call.name} query=${String(
@@ -22803,41 +22866,140 @@ function AppContent() {
       return false;
     }
 
+    const normalizedText = normalizeShenNameVariants(text);
     const previousTurns = recentUserTurnsRef.current.slice(-6);
-    const queryTurns = [...previousTurns, text].filter(Boolean).slice(-7);
-    const forcedTool =
-      selectShenMediaKBTool(text, previousTurns) ||
-      selectTaipeiCivicTool(text, previousTurns);
-    const response: Record<string, any> = {
-      output_modalities: ["audio"],
-    };
+    const queryTurns = [...previousTurns, normalizedText]
+      .filter(Boolean)
+      .slice(-7);
+
+    if (text) {
+      recentUserTurnsRef.current = [...previousTurns, normalizedText].slice(-6);
+    }
+
+    if (isShenPersonaProfileQuestion(normalizedText)) {
+      pendingLocalRouteRef.current = null;
+      return sendClientEvent(
+        {
+          type: "response.create",
+          response: {
+            output_modalities: ["audio"],
+            tool_choice: "none",
+            metadata: { response_purpose: "persona_profile" },
+          },
+        },
+        `${eventNameSuffix} (AI mayor persona answer)`
+      );
+    }
+
+    const councilorDecision = routeCouncilorTranscript(
+      normalizedText,
+      localConversationContextRef.current
+    );
+    localConversationContextRef.current = councilorDecision.context;
+
+    const councilorRoute = councilorDecision.route;
+    const fallbackTool = councilorRoute
+      ? null
+      : selectShenMediaKBTool(normalizedText, previousTurns) ||
+        selectTaipeiCivicTool(normalizedText, previousTurns);
+    const forcedTool = councilorRoute?.forcedTool || fallbackTool;
+    const routeId = `local_route_${Date.now()}_${Math.random()
+      .toString(36)
+      .slice(2)}`;
+
+    if (councilorRoute || forcedTool) {
+      lastCivicQueryTurnsRef.current = queryTurns;
+    }
+
+    if (councilorRoute?.cacheHit) {
+      pendingLocalRouteRef.current = {
+        routeId,
+        transcript: text,
+        startedAt: Date.now(),
+        forcedTool: null,
+        route: councilorRoute,
+        toolLatencyMs: 0,
+      };
+
+      const routerLog = createCouncilorRouterLog({
+        transcript: text,
+        route: councilorRoute,
+        context: localConversationContextRef.current,
+        toolLatencyMs: 0,
+      });
+      console.log("[LOCAL_ROUTER]", routerLog);
+
+      return sendClientEvent(
+        {
+          type: "response.create",
+          response: createCachedCouncilorFinalResponse(councilorRoute),
+        },
+        `${eventNameSuffix} (cached councilor final answer)`
+      );
+    }
 
     if (forcedTool) {
-      lastCivicQueryTurnsRef.current = queryTurns;
-      response.tool_choice = {
-        type: "function",
-        name: forcedTool,
+      if (forcedTool === "lookup_shen_media_kb") {
+        localConversationContextRef.current.activeToolDomain = "media";
+      } else if (forcedTool === "lookup_taipei_village_chief") {
+        localConversationContextRef.current.activeToolDomain = "village";
+      } else if (forcedTool.startsWith("lookup_taipei_councilor")) {
+        localConversationContextRef.current.activeToolDomain = "councilor";
+      }
+
+      pendingLocalRouteRef.current = {
+        routeId,
+        transcript: text,
+        startedAt: Date.now(),
+        forcedTool,
+        route: councilorRoute,
       };
-      response.instructions =
+
+      const toolInstructions =
         forcedTool === "lookup_shen_media_kb"
           ? `請結合最近的使用者對話理解新聞、受訪、選戰或政策查詢：${queryTurns.join(
               " → "
-            )}。本回合直接呼叫 lookup_shen_media_kb。query 只放核心人物／事件關鍵字；若使用者只說今天或昨天，請換算 dateFrom/dateTo，並依照 SHEN MEDIA LOCAL KB 的 freshness 規則設定 requiresLatest。不要先呼叫 web_search。`
-          : `請結合最近的使用者對話理解查詢線索：${queryTurns.join(
-              " → "
-            )}。本回合直接呼叫 ${forcedTool}；姓名、行政區或里名即使是分多次說、可能有語音錯字，也先用現有線索查詢，不要先反覆追問。`;
+            )}。直接呼叫 lookup_shen_media_kb；query 只放核心人物／事件關鍵字，並依 freshness 規則設定 requiresLatest。`
+          : councilorRoute
+            ? `deterministic councilor intent=${councilorRoute.intent.type}，使用 App 已解析的精確參數。`
+            : `請結合最近的使用者對話理解查詢線索：${queryTurns.join(
+                " → "
+              )}。直接呼叫 ${forcedTool}，不要先反覆追問。`;
 
-      console.log("🧭 Forced local tool for this turn:", forcedTool);
+      if (councilorRoute) {
+        const routerLog = createCouncilorRouterLog({
+          transcript: text,
+          route: councilorRoute,
+          context: localConversationContextRef.current,
+        });
+        console.log("[LOCAL_ROUTER]", routerLog);
+        postLog({
+          role: "system",
+          content: `[LOCAL_ROUTER] ${JSON.stringify(routerLog)}`,
+          eventId: `local_router_${routeId}`,
+        });
+      }
+
+      return sendClientEvent(
+        {
+          type: "response.create",
+          response: createSilentLocalToolResponse({
+            forcedTool,
+            args: councilorRoute?.args,
+            instructions: toolInstructions,
+            routeId,
+          }),
+        },
+        `${eventNameSuffix} (silent forced tool: ${forcedTool})`
+      );
     }
 
-    if (text) {
-      recentUserTurnsRef.current = [...previousTurns, text].slice(-6);
-    }
+    pendingLocalRouteRef.current = null;
 
     return sendClientEvent(
       {
         type: "response.create",
-        response,
+        response: { output_modalities: ["audio"] },
       },
       eventNameSuffix
     );
@@ -22885,18 +23047,25 @@ function AppContent() {
           );
         }
 
-        const followUpResponse: Record<string, any> = {
-          output_modalities: ["audio"],
-          tool_choice: shouldFallbackToWeb
-            ? { type: "function", name: "web_search" }
-            : "none",
-        };
-
-        if (shouldFallbackToWeb) {
-          followUpResponse.instructions = `本地 KB 沒有完全相符，或使用者要求的時間晚於資料快照、需要確認最新狀態。請直接用 web_search 搜尋官方來源與可信公開資料，不要再要求使用者補充相同資訊。最近查詢脈絡：${lastCivicQueryTurnsRef.current.join(
-            " → "
-          )}`;
-        }
+        const pendingRoute = pendingLocalRouteRef.current;
+        const routeId = pendingRoute?.routeId;
+        const followUpResponse: Record<string, any> = shouldFallbackToWeb
+          ? createSilentLocalToolResponse({
+              forcedTool: "web_search",
+              instructions: `本地 KB 沒有完全相符，或使用者要求的時間晚於資料快照、需要確認最新狀態。直接用 web_search 搜尋官方來源與可信公開資料，不要再要求使用者補充相同資訊。最近查詢脈絡：${lastCivicQueryTurnsRef.current.join(
+                " → "
+              )}`,
+              routeId: routeId || `web_fallback_${Date.now()}`,
+            })
+          : createLocalFinalAnswerResponse({
+              routeId,
+              route: pendingRoute?.route,
+              toolName: pendingRoute?.forcedTool || callsToProcess[0]?.name,
+              transcript:
+                pendingRoute?.transcript ||
+                lastCivicQueryTurnsRef.current.at(-1) ||
+                "",
+            });
 
         sendClientEvent(
           {
@@ -22904,8 +23073,8 @@ function AppContent() {
             response: followUpResponse,
           },
           shouldFallbackToWeb
-            ? "(fallback web search after local KB)"
-            : "(trigger response after tools)"
+            ? "(silent fallback web search after local KB)"
+            : "(single final response after tools)"
         );
       } catch (err) {
         console.error("💥 Tool execution failed:", err);
@@ -23179,14 +23348,6 @@ function AppContent() {
           sendWelcomeOnce();
         }
 
-        if (
-          eventType === "response.function_call_arguments.done" &&
-          eventData?.call_id &&
-          isAppManagedRealtimeToolName(eventData?.name)
-        ) {
-          processAppManagedToolCalls([eventData]);
-        }
-
         if (eventType === "conversation.item.input_audio_transcription.completed") {
           const raw = eventData.transcript || eventData.text || "";
           const normalized = raw && raw.trim() && raw.trim() !== "\n" ? raw.trim() : "[inaudible]";
@@ -23422,6 +23583,31 @@ function AppContent() {
             });
           }
 
+          const responsePurpose = eventData?.response?.metadata?.response_purpose;
+          const pendingRoute = pendingLocalRouteRef.current;
+
+          if (pendingRoute && responsePurpose !== "silent_local_tool") {
+            const responseLatencyMs = Date.now() - pendingRoute.startedAt;
+
+            if (pendingRoute.route) {
+              const routerLog = createCouncilorRouterLog({
+                transcript: pendingRoute.transcript,
+                route: pendingRoute.route,
+                context: localConversationContextRef.current,
+                toolLatencyMs: pendingRoute.toolLatencyMs,
+                responseLatencyMs,
+              });
+              console.log("[LOCAL_ROUTER]", routerLog);
+              postLog({
+                role: "system",
+                content: `[LOCAL_ROUTER] ${JSON.stringify(routerLog)}`,
+                eventId: `local_router_done_${pendingRoute.routeId}`,
+              });
+            }
+
+            pendingLocalRouteRef.current = null;
+          }
+
           conversationState.current.currentAssistantResponse = {
             isActive: false,
             responseId: null,
@@ -23580,6 +23766,8 @@ function AppContent() {
     respondedAudioItemIdsRef.current.clear();
     recentUserTurnsRef.current = [];
     lastCivicQueryTurnsRef.current = [];
+    localConversationContextRef.current = createInitialLocalConversationContext();
+    pendingLocalRouteRef.current = null;
     isOutputAudioBufferActiveRef.current = false;
 
     conversationState.current = {
@@ -23640,7 +23828,15 @@ ${SHEN_MEDIA_KB_TOOL_INSTRUCTIONS}
 - 當問題需要本地 KB 快照之後的最新外部資訊（新聞、價格、政策、版本更新）時，再呼叫 web_search，並用搜尋結果回答、附上來源。
 - 不得用模型記憶猜里長姓名、里長電話、市議員姓名或聯絡方式。
 - 如果使用者語音聽起來不清楚、內容不完整、像背景音，或和目前對話脈絡明顯不相關，不要直接推銷或回答；請先說：「我剛剛沒有聽清楚，可以再說一次嗎？」
-- 如果轉錄看起來是英文短句，例如 Yeah、Why、Bye、way over there，但前後脈絡主要是中文，請優先判斷可能是誤辨識，先確認，不要直接結束對話或切到英文回覆。`;
+- 如果轉錄看起來是英文短句，例如 Yeah、Why、Bye、way over there，但前後脈絡主要是中文，請優先判斷可能是誤辨識，先確認，不要直接結束對話或切到英文回覆。
+- 「沈柏楊／審柏楊／沈柏洋」等常見語音轉錄異體都指沈伯洋；不要因此否認 AI 市長身分。
+- 自我介紹、基本資料、生日、學經歷、婚姻與家庭問題屬於 MY PROFILE 人物題，直接依 Fact Bank 用第一人稱回答，不要誤送近期 Media KB。
+
+# 每回合必須完成答案
+
+- 第一個句子就回答實質內容，不要先說「我查一下／我整理一下／我來說清楚／接下來回答」。
+- Local Tool 呼叫完成後必須根據 function output 產生一次 final answer，不得停在工具呼叫或回答預告。
+- 地區議員名單必須逐字依 Tool data 回答，每個姓名一次，不得漏人、重複或自行補人。`;
 
     const webSearchTool = {
       type: "function",
