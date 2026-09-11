@@ -14,6 +14,7 @@ test("creates an isolated exact welcome response", () => {
   assert.deepEqual(event.response.input, []);
   assert.deepEqual(event.response.output_modalities, ["audio"]);
   assert.equal(event.response.tool_choice, "none");
+  assert.equal(event.response.metadata.response_purpose, "welcome");
   assert.ok(event.response.instructions.endsWith(WELCOME_MESSAGE));
   assert.equal(event.response.instructions.match(/你的市長沈伯洋向您問好！/g)?.length, 1);
 });
