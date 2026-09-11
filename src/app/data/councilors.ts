@@ -1,11 +1,20 @@
-// 臺北市第14屆現任市議員 Local KB V2
-// Enriched: birthday / background / education / experience / policy focus / public relationship with 沈伯洋
-// Verified: 2026-09-03
+// 臺北市第14屆現任市議員 Local KB — Realtime Enriched V4
+// Enriched: profile / policyTop3 / topic indexes / public relationship with 沈伯洋
+// Roster verified: 2026-09-03; V4 schema/router: 2026-09-11
 //
 // IMPORTANT:
 // 1. 「與沈伯洋的關係」只把可查證公開互動當作 confirmed。
 // 2. possibleCityHallCollaborationAreas 是依公開背景與議題推估，不是既有合作協議。
 // 3. 現任名單、黨籍與聯絡方式仍屬動態資料；若使用者問「最新」，應再查官方來源。
+
+import {
+  DPP_COUNCILOR_V4_BLUEPRINTS,
+  fallbackCouncilorTopics,
+  fallbackPolicyTop3,
+  normalizeCouncilorTopic,
+} from "./councilorV4.ts";
+
+export { normalizeCouncilorTopic } from "./councilorV4.ts";
 
 export type TaipeiCouncilorStatus = "current" | "uncertain" | "former";
 
@@ -779,16 +788,87 @@ export type CouncilorRelationshipLevel =
   | "institutional_only"
   | "no_verified_direct_relationship";
 
-export interface PublicCollaborationEvent {
+export type CouncilorPolicyTopic =
+  | "交通"
+  | "捷運"
+  | "行人安全"
+  | "內湖交通"
+  | "北士科"
+  | "育兒"
+  | "公托"
+  | "母嬰"
+  | "教育"
+  | "青年"
+  | "住宅"
+  | "社宅"
+  | "都更"
+  | "老屋"
+  | "電梯無障礙"
+  | "長照"
+  | "長者"
+  | "身障"
+  | "市場商圈"
+  | "文化"
+  | "運動"
+  | "動保"
+  | "河岸"
+  | "環境"
+  | "社子島"
+  | "地方建設"
+  | "AI數位"
+  | "國際城市"
+  | "防災";
+
+export interface CouncilorPolicyItem {
+  title: string;
+  summary: string;
+  tags: CouncilorPolicyTopic[];
+  sourceUrl?: string;
+  verifiedAt: string;
+  status?: "current" | "historical" | "campaign";
+}
+
+export type ShenCouncilorEventType =
+  | "formal_joint_campaign"
+  | "joint_local_visit"
+  | "public_policy_alignment"
+  | "formal_endorsement"
+  | "campaign_team_role"
+  | "public_opposition"
+  | "institutional_only";
+
+interface LegacyPublicCollaborationEvent {
   date: string;
   description: string;
   sourceUrl: string;
 }
 
-export interface CouncilorShenRelationship {
+export interface CouncilorShenPublicEvent {
+  date: string;
+  title: string;
+  eventType: ShenCouncilorEventType;
+  location?: string;
+  summary: string;
+  /** Backward-compatible text used by the existing answer prompt. */
+  description: string;
+  mediaEventId?: string;
+  sourceUrl?: string;
+  verifiedAt: string;
+}
+
+export interface CouncilorSharedPolicyTopic {
+  topic: CouncilorPolicyTopic;
+  strength: "strong" | "moderate" | "possible";
+  shenPolicyRef?: string;
+  rationale: string;
+  evidence?: string[];
+  caution?: string;
+}
+
+interface LegacyCouncilorShenRelationship {
   level: CouncilorRelationshipLevel;
   summary: string;
-  confirmedPublicEvents: PublicCollaborationEvent[];
+  confirmedPublicEvents: LegacyPublicCollaborationEvent[];
   /**
    * 依議員公開背景、選區與政策關注推估的「可能市政合作／議會協商領域」。
    * 不是既有協議，也不能說成雙方已共同推動。
@@ -798,15 +878,52 @@ export interface CouncilorShenRelationship {
   verifiedAt: string;
 }
 
-export interface TaipeiCouncilor extends TaipeiCouncilorBase {
-  /** ISO YYYY-MM-DD；年齡請動態計算，不要寫死。 */
+export interface CouncilorShenRelationship
+  extends Omit<LegacyCouncilorShenRelationship, "confirmedPublicEvents"> {
+  confirmedPublicEvents: CouncilorShenPublicEvent[];
+  relationshipTypes: ShenCouncilorEventType[];
+  sharedPolicyTopics: CouncilorSharedPolicyTopic[];
+  realtimeSummary: {
+    relationship: string;
+    policies: string;
+    collaboration: string;
+  };
+}
+
+export interface CouncilorNominationStatus {
+  electionYear: 2026;
+  status:
+    | "nominated"
+    | "primary_qualified"
+    | "not_registered"
+    | "eligibility_revoked"
+    | "not_tracked";
+  summary: string;
+  sourceUrl?: string;
+  verifiedAt: string;
+}
+
+interface LegacyCouncilorEnrichment {
   birthDate: string;
   backgroundSummary: string;
   education: string[];
   experience: string[];
   policyFocusTags: string[];
   profileSourceUrl: string;
+  relationToShen: LegacyCouncilorShenRelationship;
+}
+
+export interface TaipeiCouncilor extends TaipeiCouncilorBase {
+  /** ISO YYYY-MM-DD；年齡請動態計算，不要寫死。 */
+  birthDate: string;
+  backgroundSummary: string;
+  education: string[];
+  experience: string[];
+  policyTop3: CouncilorPolicyItem[];
+  policyFocusTags: CouncilorPolicyTopic[];
+  profileSourceUrl: string;
   relationToShen: CouncilorShenRelationship;
+  partyNomination2026?: CouncilorNominationStatus;
 }
 
 export const TAIPEI_COUNCILOR_META = {
@@ -820,7 +937,7 @@ export const TAIPEI_COUNCILOR_META = {
 
 export const COUNCILOR_ENRICHMENT: Record<
   string,
-  Omit<TaipeiCouncilor, keyof TaipeiCouncilorBase>
+  LegacyCouncilorEnrichment
 > = {
   "黃瀞瑩": {
     "birthDate": "1992-06-10",
@@ -2697,9 +2814,103 @@ export const TAIPEI_COUNCILORS: TaipeiCouncilor[] = TAIPEI_COUNCILORS_BASE.map(
       throw new Error(`Missing councilor enrichment: ${base.name}`);
     }
 
+    const blueprint = DPP_COUNCILOR_V4_BLUEPRINTS[base.name];
+    const policyFocusTags =
+      blueprint?.policyFocusTags || fallbackCouncilorTopics(extra.policyFocusTags);
+    const policyTop3 = blueprint
+      ? blueprint.policyTop3.map((item) => ({
+          ...item,
+          sourceUrl: extra.profileSourceUrl || base.sourceUrl,
+          verifiedAt: extra.relationToShen.verifiedAt,
+          status: "current" as const,
+        }))
+      : fallbackPolicyTop3(
+          extra.policyFocusTags,
+          extra.profileSourceUrl || base.sourceUrl,
+          extra.relationToShen.verifiedAt
+        );
+    const confirmedPublicEvents = extra.relationToShen.confirmedPublicEvents.map(
+      (event) => {
+        const eventType: ShenCouncilorEventType =
+          extra.relationToShen.level === "public_policy_opposition"
+            ? "public_opposition"
+            : extra.relationToShen.level === "confirmed_public_issue_overlap"
+              ? "public_policy_alignment"
+              : extra.relationToShen.level === "institutional_only"
+                ? "institutional_only"
+                : "joint_local_visit";
+        const mediaEventId = event.sourceUrl.includes("202608160067")
+          ? "2026-08-16-songshan-wufenpu"
+          : undefined;
+
+        return {
+          date: event.date,
+          title: `${event.date} 公開活動`,
+          eventType,
+          summary: event.description,
+          description: event.description,
+          ...(mediaEventId ? { mediaEventId } : {}),
+          sourceUrl: event.sourceUrl,
+          verifiedAt: extra.relationToShen.verifiedAt,
+        };
+      }
+    );
+    const relationshipTypes = [
+      ...new Set(
+        confirmedPublicEvents.length
+          ? confirmedPublicEvents.map(({ eventType }) => eventType)
+          : [
+              extra.relationToShen.level === "public_policy_opposition"
+                ? "public_opposition"
+                : extra.relationToShen.level === "confirmed_public_issue_overlap"
+                  ? "public_policy_alignment"
+                  : extra.relationToShen.level === "institutional_only"
+                    ? "institutional_only"
+                    : "institutional_only",
+            ]
+      ),
+    ] as ShenCouncilorEventType[];
+    const sharedPolicyTopics =
+      blueprint?.sharedPolicyTopics ||
+      policyFocusTags.slice(0, 2).map((topic) => ({
+        topic,
+        strength: "possible" as const,
+        rationale: `可依${topic}公開關注進一步確認市政協商空間。`,
+        caution: "目前僅能視為可能政策交集，不能說成已達成合作。",
+      }));
+    const realtimeSummary =
+      blueprint?.realtimeSummary || {
+        relationship: extra.relationToShen.summary,
+        policies: `其公開市政關注包括${policyFocusTags.slice(0, 4).join("、")}。`,
+        collaboration: sharedPolicyTopics.length
+          ? `可就${sharedPolicyTopics.map(({ topic }) => topic).join("、")}進一步討論。`
+          : "目前沒有足夠資料把可能方向說成既有合作。",
+      };
+
     return {
       ...base,
       ...extra,
+      policyTop3,
+      policyFocusTags,
+      relationToShen: {
+        ...extra.relationToShen,
+        confirmedPublicEvents,
+        relationshipTypes,
+        sharedPolicyTopics,
+        realtimeSummary,
+      },
+      ...(base.name === "陳怡君"
+        ? {
+            partyNomination2026: {
+              electionYear: 2026 as const,
+              status: "eligibility_revoked" as const,
+              summary:
+                "她仍列於第14屆臺北市議會現任議員名冊；但民進黨於2026-02-25撤銷其2026市議員參選資格。現任職務與下一屆黨內提名狀態分開記錄。",
+              sourceUrl: "https://www.cna.com.tw/news/aipl/202602250282.aspx",
+              verifiedAt: "2026-02-25",
+            },
+          }
+        : {}),
       sourceUrl: extra.profileSourceUrl || base.sourceUrl,
     };
   }
@@ -2723,10 +2934,25 @@ export const DISTRICT_TO_CONSTITUENCY: Record<string, number> = {
 };
 
 function normalizeDistrict(input: string) {
-  const value = input.trim().replace(/\s+/g, "");
+  const value = String(input || "")
+    .normalize("NFKC")
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/臺/g, "台")
+    .replace(/^台北市/, "");
   if (!value) return "";
   if (value === "平地原住民" || value === "山地原住民") return value;
   return value.endsWith("區") ? value : `${value}區`;
+}
+
+/** District queries always resolve to the complete multi-member constituency. */
+export function resolveCouncilorConstituency(districtInput: string) {
+  const district = normalizeDistrict(districtInput);
+
+  return {
+    district,
+    constituency: DISTRICT_TO_CONSTITUENCY[district],
+  };
 }
 
 function normalizeName(input: string) {
@@ -2784,8 +3010,53 @@ function suggestCouncilors(nameInput: string, limit = 5) {
 }
 
 function normalizeParty(input: string) {
-  return input.trim().replace(/\s+/g, "");
+  const value = String(input || "").trim().replace(/\s+/g, "");
+
+  if (/跟你同黨|跟你同黨派|你們黨|同黨議員/.test(value)) {
+    return "民主進步黨";
+  }
+
+  const aliases: Record<string, string> = {
+    民進黨: "民主進步黨",
+    國民黨: "中國國民黨",
+    民眾黨: "台灣民眾黨",
+    社民黨: "社會民主黨",
+  };
+
+  return aliases[value] || value;
 }
+
+function addToIndex<K>(map: Map<K, TaipeiCouncilor[]>, key: K, item: TaipeiCouncilor) {
+  const current = map.get(key);
+  if (current) current.push(item);
+  else map.set(key, [item]);
+}
+
+const byName = new Map<string, TaipeiCouncilor>();
+const byConstituency = new Map<number, TaipeiCouncilor[]>();
+const byParty = new Map<string, TaipeiCouncilor[]>();
+const byTopic = new Map<CouncilorPolicyTopic, TaipeiCouncilor[]>();
+const byRelationshipType = new Map<ShenCouncilorEventType, TaipeiCouncilor[]>();
+
+for (const councilor of TAIPEI_COUNCILORS) {
+  if (councilor.status !== "current") continue;
+  byName.set(normalizeName(councilor.name), councilor);
+  addToIndex(byConstituency, councilor.constituency, councilor);
+  addToIndex(byParty, normalizeParty(councilor.party), councilor);
+  councilor.policyFocusTags.forEach((topic) => addToIndex(byTopic, topic, councilor));
+  councilor.relationToShen.relationshipTypes.forEach((relationshipType) =>
+    addToIndex(byRelationshipType, relationshipType, councilor)
+  );
+}
+
+/** Module-level indexes are built once and reused by every Realtime tool call. */
+export const TAIPEI_COUNCILOR_INDEXES = {
+  byName,
+  byConstituency,
+  byParty,
+  byTopic,
+  byRelationshipType,
+} as const;
 
 export function calculateAge(
   birthDate: string,
@@ -2808,50 +3079,228 @@ export type CouncilorSortBy =
   | "youngest_first"
   | "oldest_first";
 
+export type CouncilorListDetail = "quick" | "standard" | "full";
+export type CouncilorNameDetail =
+  | "quick"
+  | "profile"
+  | "policy"
+  | "relationship"
+  | "events"
+  | "full";
+
 export interface CouncilorQuery {
   district?: string;
+  constituency?: number;
+  names?: string[];
   party?: string;
+  topic?: string;
+  relationshipType?: ShenCouncilorEventType;
+  hasPublicEventWithShen?: boolean;
   relationshipLevel?: CouncilorRelationshipLevel;
+  detail?: CouncilorListDetail;
   sortBy?: CouncilorSortBy;
   limit?: number;
 }
 
-export function queryCouncilors(query: CouncilorQuery = {}) {
-  const district = query.district
-    ? normalizeDistrict(String(query.district))
-    : "";
-  const party = query.party
-    ? normalizeParty(String(query.party))
-    : "";
+function councilorIdentity(item: TaipeiCouncilor) {
+  return {
+    name: item.name,
+    party: item.party,
+    constituency: item.constituency,
+    constituencyName: item.constituencyName,
+    districts: item.districts,
+    status: item.status,
+    verifiedAt: item.verifiedAt,
+  };
+}
 
-  let constituency: number | undefined;
+function projectCouncilor(
+  item: TaipeiCouncilor,
+  detail: CouncilorListDetail | CouncilorNameDetail
+): Record<string, any> {
+  const identity = councilorIdentity(item);
+  const currentAge = calculateAge(item.birthDate);
+  const quick = {
+    ...identity,
+    policyFocusTags: item.policyFocusTags,
+    realtimeSummary: item.relationToShen.realtimeSummary,
+    relationToShen: {
+      level: item.relationToShen.level,
+      relationshipTypes: item.relationToShen.relationshipTypes,
+      publicEventCount: item.relationToShen.confirmedPublicEvents.length,
+    },
+    confirmedPublicEventHighlights: item.relationToShen.confirmedPublicEvents
+      .slice(0, 2)
+      .map(({ date, title, eventType, summary, mediaEventId }) => ({
+        date,
+        title,
+        eventType,
+        summary,
+        ...(mediaEventId ? { mediaEventId } : {}),
+      })),
+    ...(item.partyNomination2026
+      ? { partyNomination2026: item.partyNomination2026 }
+      : {}),
+  };
+
+  if (detail === "quick") return quick;
+
+  if (detail === "profile") {
+    return {
+      ...identity,
+      birthDate: item.birthDate,
+      currentAge,
+      backgroundSummary: item.backgroundSummary,
+      education: item.education,
+      experience: item.experience,
+      ...(item.partyNomination2026
+        ? { partyNomination2026: item.partyNomination2026 }
+        : {}),
+    };
+  }
+
+  if (detail === "policy") {
+    return {
+      ...identity,
+      policyTop3: item.policyTop3,
+      policyFocusTags: item.policyFocusTags,
+      sharedPolicyTopics: item.relationToShen.sharedPolicyTopics,
+      realtimeSummary: item.relationToShen.realtimeSummary,
+    };
+  }
+
+  if (detail === "relationship") {
+    return {
+      ...identity,
+      relationToShen: {
+        ...item.relationToShen,
+        confirmedPublicEvents: item.relationToShen.confirmedPublicEvents.slice(0, 3),
+      },
+    };
+  }
+
+  if (detail === "events") {
+    return {
+      ...identity,
+      confirmedPublicEvents: item.relationToShen.confirmedPublicEvents,
+      realtimeSummary: item.relationToShen.realtimeSummary,
+    };
+  }
+
+  if (detail === "standard") {
+    return {
+      ...quick,
+      birthDate: item.birthDate,
+      currentAge,
+      backgroundSummary: item.backgroundSummary,
+      education: item.education,
+      experience: item.experience,
+      policyTop3: item.policyTop3,
+      relationToShen: {
+        level: item.relationToShen.level,
+        summary: item.relationToShen.summary,
+        relationshipTypes: item.relationToShen.relationshipTypes,
+        sharedPolicyTopics: item.relationToShen.sharedPolicyTopics,
+        realtimeSummary: item.relationToShen.realtimeSummary,
+        confirmedPublicEvents: item.relationToShen.confirmedPublicEvents.slice(0, 3),
+        caution: item.relationToShen.caution,
+        verifiedAt: item.relationToShen.verifiedAt,
+      },
+    };
+  }
+
+  return { ...item, currentAge };
+}
+
+function intersectCouncilors(
+  current: TaipeiCouncilor[],
+  indexed: TaipeiCouncilor[] | undefined
+) {
+  if (!indexed) return [];
+  const ids = new Set(indexed.map(({ id }) => id));
+  return current.filter(({ id }) => ids.has(id));
+}
+
+export function queryCouncilors(query: CouncilorQuery = {}) {
+  const resolvedDistrict = query.district
+    ? resolveCouncilorConstituency(String(query.district))
+    : { district: "", constituency: undefined };
+  const district = resolvedDistrict.district;
+  const explicitConstituency = Number(query.constituency || 0);
+  const constituency =
+    resolvedDistrict.constituency ||
+    (Number.isInteger(explicitConstituency) && explicitConstituency >= 1 && explicitConstituency <= 8
+      ? explicitConstituency
+      : undefined);
+  const party = query.party ? normalizeParty(String(query.party)) : "";
+  const normalizedTopics = query.topic
+    ? normalizeCouncilorTopic(String(query.topic))
+    : [];
+  const detail: CouncilorListDetail = query.detail || "quick";
 
   if (district) {
-    constituency = DISTRICT_TO_CONSTITUENCY[district];
-
     if (!constituency) {
       return {
         found: false as const,
         reason: "invalid_district" as const,
-        district,
+        needsClarification: true,
+        shouldSearchWeb: false,
+        shouldVerifyLatest: false,
+        normalized: { district },
         message: "找不到對應的臺北市議員選區。",
       };
     }
   }
 
-  let members = TAIPEI_COUNCILORS.filter(
-    (item) => item.status === "current"
-  );
+  if (query.topic && !normalizedTopics.length) {
+    return {
+      found: false as const,
+      reason: "ambiguous_topic" as const,
+      needsClarification: true,
+      shouldSearchWeb: false,
+      shouldVerifyLatest: false,
+      normalized: {
+        district: district || undefined,
+        constituency,
+        party: party || undefined,
+        topic: String(query.topic),
+      },
+      message: "我還不能確定你指的是哪一類政策，請補一個主題，例如交通、育兒、老屋或市場。",
+    };
+  }
 
-  if (constituency) {
-    members = members.filter(
-      (item) => item.constituency === constituency
-    );
+  let members = constituency
+    ? [...(byConstituency.get(constituency) || [])]
+    : TAIPEI_COUNCILORS.filter((item) => item.status === "current");
+
+  if (query.names?.length) {
+    const requestedNames = new Set(query.names.map(normalizeName));
+    members = members.filter((item) => requestedNames.has(normalizeName(item.name)));
   }
 
   if (party) {
+    members = intersectCouncilors(members, byParty.get(party));
+  }
+
+  if (normalizedTopics.length) {
+    const topicIds = new Set(
+      normalizedTopics.flatMap((topic) =>
+        (byTopic.get(topic) || []).map(({ id }) => id)
+      )
+    );
+    members = members.filter(({ id }) => topicIds.has(id));
+  }
+
+  if (query.relationshipType) {
+    members = intersectCouncilors(
+      members,
+      byRelationshipType.get(query.relationshipType)
+    );
+  }
+
+  if (query.hasPublicEventWithShen) {
     members = members.filter(
-      (item) => normalizeParty(item.party) === party
+      (item) => item.relationToShen.confirmedPublicEvents.length > 0
     );
   }
 
@@ -2888,6 +3337,25 @@ export function queryCouncilors(query: CouncilorQuery = {}) {
 
   return {
     found: members.length > 0 as true | false,
+    mode: normalizedTopics.length
+      ? "topic" as const
+      : query.relationshipType || query.hasPublicEventWithShen || query.relationshipLevel
+        ? "relationship" as const
+        : constituency
+          ? (district ? "district" as const : "constituency" as const)
+          : party
+            ? "party" as const
+            : "all" as const,
+    normalized: {
+      district: district || undefined,
+      constituency,
+      names: query.names?.length ? query.names.map(normalizeName) : undefined,
+      party: party || undefined,
+      topic: normalizedTopics.length ? normalizedTopics.join("、") : undefined,
+      relationshipType: query.relationshipType,
+      hasPublicEventWithShen: query.hasPublicEventWithShen,
+      detail,
+    },
     district: district || undefined,
     constituency,
     constituencyName:
@@ -2898,17 +3366,21 @@ export function queryCouncilors(query: CouncilorQuery = {}) {
           )?.constituencyName
         : undefined,
     filters: {
+      names: query.names?.length ? query.names.map(normalizeName) : undefined,
       party: party || undefined,
+      topic: normalizedTopics.length ? normalizedTopics : undefined,
+      relationshipType: query.relationshipType,
+      hasPublicEventWithShen: query.hasPublicEventWithShen,
       relationshipLevel: query.relationshipLevel,
+      detail,
       sortBy,
       limit,
     },
     count: members.length,
-    data: members.map((item) => ({
-      ...item,
-      currentAge: calculateAge(item.birthDate),
-    })),
+    data: members.map((item) => projectCouncilor(item, detail)),
     verifiedAt: TAIPEI_COUNCILOR_META.verifiedAt,
+    shouldSearchWeb: false,
+    shouldVerifyLatest: false,
   };
 }
 
@@ -2921,34 +3393,38 @@ export function lookupCouncilorsByDistrict(
   });
 }
 
-export function lookupCouncilorByName(nameInput: string) {
+export function lookupCouncilorByName(
+  nameInput: string,
+  detail: CouncilorNameDetail = "full"
+) {
   const name = normalizeName(nameInput);
+  const match = byName.get(name);
 
-  const matches = TAIPEI_COUNCILORS.filter(
-    (item) =>
-      normalizeName(item.name) === name &&
-      item.status === "current"
-  );
-
-  if (!matches.length) {
+  if (!match) {
+    const suggestions = suggestCouncilors(name);
     return {
       found: false as const,
-      reason: "not_found" as const,
-      name,
-      suggestions: suggestCouncilors(name),
-      shouldSearchWeb: true,
-      message:
-        "本地現任市議員沒有完全相符的姓名，已提供可能候選並應查最新官方資料；不要反覆要求使用者補行政區。",
+      mode: "name" as const,
+      reason: suggestions.length ? "ambiguous_name" as const : "not_found" as const,
+      normalized: { name, detail },
+      suggestions,
+      needsClarification: suggestions.length > 0,
+      shouldSearchWeb: suggestions.length === 0,
+      shouldVerifyLatest: suggestions.length === 0,
+      message: suggestions.length
+        ? "姓名可能有語音或用字差異，請從候選人中確認，不需要先查網路。"
+        : "本地現任市議員沒有相符姓名，需要查最新官方名冊。",
     };
   }
 
   return {
     found: true as const,
-    data: matches.map((item) => ({
-      ...item,
-      currentAge: calculateAge(item.birthDate),
-    })),
+    mode: "name" as const,
+    normalized: { name, detail },
+    data: [projectCouncilor(match, detail)],
     verifiedAt: TAIPEI_COUNCILOR_META.verifiedAt,
+    shouldSearchWeb: false,
+    shouldVerifyLatest: match.status !== "current",
   };
 }
 
@@ -2956,7 +3432,7 @@ export const LOOKUP_TAIPEI_COUNCILORS_TOOL = {
   type: "function",
   name: "lookup_taipei_councilors",
   description:
-    "查詢臺北市現任市議員。可依行政區、黨籍、與沈伯洋的公開關係層級篩選，也可按年齡排序。回傳姓名、生日、背景、政策關注、公開聯絡方式，以及與沈伯洋可查證的公開互動。",
+    "查詢臺北市現任市議員 Realtime Enriched V4。行政區會先轉成完整複數選區；支援黨籍、政策主題、與沈伯洋的公開關係或共同活動。預設 quick 以降低延遲。",
   parameters: {
     type: "object",
     properties: {
@@ -2965,10 +3441,47 @@ export const LOOKUP_TAIPEI_COUNCILORS_TOOL = {
         description:
           "可選。臺北市行政區，例如內湖區、大安區、文山區；原住民選區可填平地原住民或山地原住民。",
       },
+      constituency: {
+        type: "integer",
+        minimum: 1,
+        maximum: 8,
+        description: "可選。已正規化的臺北市議員選區編號。",
+      },
+      names: {
+        type: "array",
+        items: { type: "string" },
+        description: "可選。follow-up 指涉多位已知議員時使用，例如上一輪的『這兩位』。",
+      },
       party: {
         type: "string",
         description:
           "可選。依黨籍篩選，例如民主進步黨、中國國民黨、台灣民眾黨、社會民主黨、新黨、無黨籍。",
+      },
+      topic: {
+        type: "string",
+        description: "可選。自然語言政策主題，例如交通、捷運、老屋加裝電梯、育兒、青年或市場；Tool 會做 alias normalization。",
+      },
+      relationshipType: {
+        type: "string",
+        enum: [
+          "formal_joint_campaign",
+          "joint_local_visit",
+          "public_policy_alignment",
+          "formal_endorsement",
+          "campaign_team_role",
+          "public_opposition",
+          "institutional_only",
+        ],
+        description: "可選。與沈伯洋的公開關係／事件類型。",
+      },
+      hasPublicEventWithShen: {
+        type: "boolean",
+        description: "可選。true 時只回傳有可查證共同公開活動的議員，預設全台北。",
+      },
+      detail: {
+        type: "string",
+        enum: ["quick", "standard", "full"],
+        description: "輸出細節。Realtime 預設 quick；standard 加背景學經歷；full 才含完整聯絡與來源。",
       },
       relationshipLevel: {
         type: "string",
@@ -3016,6 +3529,11 @@ export const LOOKUP_TAIPEI_COUNCILOR_BY_NAME_TOOL = {
         description:
           "市議員姓名，例如何孟樺、苗博雅、黃瀞瑩。",
       },
+      detail: {
+        type: "string",
+        enum: ["quick", "profile", "policy", "relationship", "events", "full"],
+        description: "依問題選擇輸出：背景=profile、政見=policy、關係／合作=relationship、共同活動=events；Realtime 一般查詢用 quick。",
+      },
     },
     required: ["name"],
     additionalProperties: false,
@@ -3023,7 +3541,7 @@ export const LOOKUP_TAIPEI_COUNCILOR_BY_NAME_TOOL = {
 } as const;
 
 export const TAIPEI_COUNCILOR_TOOL_INSTRUCTIONS = `
-# TAIPEI COUNCILOR LOCAL TOOL V2
+# TAIPEI COUNCILOR LOCAL TOOL — REALTIME ENRICHED V4
 
 這份資料包含 53 位現任臺北市議員的：
 - 姓名
@@ -3034,9 +3552,22 @@ export const TAIPEI_COUNCILOR_TOOL_INSTRUCTIONS = `
 - 公開背景
 - 學經歷
 - 政策關注標籤
+- 三項代表政策與 topic alias
 - 公開聯絡方式
 - 與沈伯洋目前可查證的公開關係
+- 公開活動 eventType / mediaEventId
+- sharedPolicyTopics 與可直接口語轉述的 realtimeSummary
 - 可能的未來市政協商／合作領域
+
+## Silent deterministic tool
+
+App 會在 transcript completed 後決定 Tool 與 detail。Local Tool 查詢前禁止說：
+- 我查一下
+- 我看一下資料
+- 我整理一下
+- 讓我想一下
+
+Function output 回來後只建立一次 final assistant response，直接講答案。
 
 ## 查區域
 使用者問：
@@ -3044,6 +3575,27 @@ export const TAIPEI_COUNCILOR_TOOL_INSTRUCTIONS = `
 - 「我是大安區，我的市議員有哪些？」
 
 呼叫 lookup_taipei_councilors，帶 district。
+
+district 一律先轉 constituency，回完整複數選區 current 名單：
+- 北投／士林 → 1
+- 內湖／南港 → 2
+- 松山／信義 → 3
+- 中山／大同 → 4
+- 中正／萬華 → 5
+- 大安／文山 → 6
+
+不得用單一 district tag 篩掉同選區議員。
+
+「跟你同黨／跟你同黨派／你們黨／同黨議員」固定為 party=民主進步黨。
+
+## 查政策與關係
+
+- 政見／訴求／政策 → by_name detail=policy
+- 背景／學歷／經歷／年齡 → by_name detail=profile
+- 跟沈伯洋關係／怎麼合作 → by_name detail=relationship
+- 一起去哪／同台／公開活動 → by_name detail=events
+- 哪些議員關心某主題 → list topic=...
+- 哪些議員與沈伯洋有公開活動 → list hasPublicEventWithShen=true，預設全台北
 
 ## 查年齡
 使用者問：
@@ -3124,6 +3676,9 @@ possibleCityHallCollaborationAreas：
 再講 1 個最具體公開事件。
 
 不要一次朗讀整份履歷。
+
+Tool found=true 且 status=current 時直接有把握回答，不要補「大概／最好再查官方」。
+只有 not_found、ambiguous、stale 或 shouldVerifyLatest=true 才澄清或查 Web。
 `;
 
 export function executeCouncilorTool(
@@ -3138,10 +3693,34 @@ export function executeCouncilorTool(
           typeof args?.district === "string"
             ? args.district
             : undefined,
+        constituency:
+          typeof args?.constituency === "number"
+            ? args.constituency
+            : undefined,
+        names:
+          Array.isArray(args?.names)
+            ? args.names.map((name: unknown) => String(name))
+            : undefined,
         party:
           typeof args?.party === "string"
             ? args.party
             : undefined,
+        topic:
+          typeof args?.topic === "string"
+            ? args.topic
+            : undefined,
+        relationshipType:
+          typeof args?.relationshipType === "string"
+            ? args.relationshipType
+            : undefined,
+        hasPublicEventWithShen:
+          typeof args?.hasPublicEventWithShen === "boolean"
+            ? args.hasPublicEventWithShen
+            : undefined,
+        detail:
+          typeof args?.detail === "string"
+            ? args.detail
+            : "quick",
         relationshipLevel:
           typeof args?.relationshipLevel === "string"
             ? args.relationshipLevel
@@ -3162,7 +3741,8 @@ export function executeCouncilorTool(
     return {
       handled: true as const,
       result: lookupCouncilorByName(
-        String(args?.name || "")
+        String(args?.name || ""),
+        typeof args?.detail === "string" ? args.detail : "quick"
       ),
     };
   }
