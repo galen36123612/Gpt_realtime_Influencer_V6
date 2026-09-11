@@ -17,7 +17,7 @@ export interface LocalConversationContext {
   activeConstituency?: number;
   activeCouncilorNames?: string[];
   activeTopic?: CouncilorPolicyTopic;
-  activeToolDomain?: "councilor" | "media" | "village";
+  activeToolDomain?: "councilor" | "media" | "village" | "policy";
   lastCouncilorToolResult?: unknown;
 }
 
@@ -30,6 +30,7 @@ export type CouncilorIntent =
   | { type: "relationship"; name: string; names: string[] }
   | { type: "events"; name: string; names: string[] }
   | { type: "public_activity_list"; party?: string }
+  | { type: "policy_alignment_list"; party: string }
   | null;
 
 export interface CouncilorRealtimeRoute {
@@ -128,7 +129,23 @@ function isPublicActivityList(text: string) {
   const value = compact(text);
   return (
     /(?:你跟)?哪些市?議員.*(?:公開活動|共同活動|同台|合作)/.test(value) ||
-    /(?:公開活動|共同活動|同台|合作).*(?:哪些|哪幾位)市?議員/.test(value)
+    /(?:公開活動|共同活動|同台|合作).*(?:哪些|哪幾位)市?議員/.test(value) ||
+    /(?:你)?(?:有)?跟(?:其他)?市?議員.*(?:公開行程|公開站台|公開活動|共同活動|同台)/.test(
+      value
+    ) ||
+    /其他市?議員.*(?:公開行程|公開站台|公開活動|共同活動|同台)/.test(value)
+  );
+}
+
+function isPolicyAlignmentList(text: string) {
+  const value = compact(text);
+  return (
+    /(?:有沒有|有哪些|哪些|有)市?議員.*(?:方向一樣|方向一致|政見一致|政策一致|理念一致)/.test(
+      value
+    ) ||
+    /市?議員.*(?:跟你|和你).*(?:方向|政見|政策|理念).*(?:一樣|一致|相近)/.test(
+      value
+    )
   );
 }
 
@@ -150,6 +167,10 @@ function referencedNames(
     return context.activeCouncilorNames?.slice(-1) || [];
   }
 
+  if (/^(?:那|這).{0,8}(?:他|她)/.test(value)) {
+    return context.activeCouncilorNames?.slice(-1) || [];
+  }
+
   return [];
 }
 
@@ -164,7 +185,7 @@ function hasEventIntent(text: string) {
 }
 
 function hasRelationshipIntent(text: string) {
-  return /合作|關係|熟嗎|connection|政策交集/.test(
+  return /合作|關係|熟嗎|connection|政策交集|支持他|支持她|採納|認同/.test(
     compact(text).toLowerCase()
   );
 }
@@ -205,7 +226,11 @@ function cacheSupportsIntent(
       return Boolean(item.relationToShen || item.realtimeSummary);
     }
     if (intent.type === "events") {
-      return Boolean(item.confirmedPublicEvents || item.relationToShen?.confirmedPublicEvents);
+      return Boolean(
+        item.confirmedPublicEvents ||
+          item.confirmedPublicEventHighlights ||
+          item.relationToShen?.confirmedPublicEvents
+      );
     }
     if (intent.type === "profile") return Boolean(item.backgroundSummary || item.birthDate);
     return false;
@@ -229,12 +254,29 @@ export function detectCouncilorIntent(
     return { type: "public_activity_list", ...(party ? { party } : {}) };
   }
 
+  if (isPolicyAlignmentList(text) && !names.length) {
+    if (
+      context.activeTopic &&
+      context.activeToolDomain !== "village" &&
+      context.activeToolDomain !== "media"
+    ) {
+      return {
+        type: "topic_search",
+        topic: context.activeTopic,
+        party: "民主進步黨",
+      };
+    }
+
+    return { type: "policy_alignment_list", party: "民主進步黨" };
+  }
+
   if (names.length) {
     const named = { name: names[0], names };
     if (hasEventIntent(text)) return { type: "events", ...named };
     if (hasPolicyIntent(text)) return { type: "policy", ...named };
     if (hasRelationshipIntent(text)) return { type: "relationship", ...named };
     if (hasProfileIntent(text) || /議員/.test(text)) return { type: "profile", ...named };
+    return { type: "profile", ...named };
   }
 
   if (/議員/.test(text) && topic) {
@@ -344,6 +386,21 @@ function routeForIntent(
     };
   }
 
+  if (intent.type === "policy_alignment_list") {
+    return {
+      intent,
+      forcedTool: "lookup_taipei_councilors",
+      args: {
+        party: intent.party,
+        detail: "quick",
+      },
+      detail,
+      entities,
+      cacheHit: false,
+      globalScope: true,
+    };
+  }
+
   return {
     intent,
     forcedTool: "lookup_taipei_councilors",
@@ -375,7 +432,12 @@ export function routeCouncilorTranscript(
           activeConstituency: DISTRICT_TO_CONSTITUENCY[district],
         }
       : {}),
-    ...(topic ? { activeTopic: topic } : {}),
+    ...(topic
+      ? {
+          activeTopic: topic,
+          activeToolDomain: "policy" as const,
+        }
+      : {}),
     ...(names.length ? { activeCouncilorNames: names } : {}),
   };
   const intent = detectCouncilorIntent(transcript, context);
@@ -445,7 +507,30 @@ export function createSilentLocalToolResponse(input: {
 export function createLocalFinalAnswerResponse(input: {
   routeId?: string;
   instructions?: string;
+  route?: CouncilorRealtimeRoute | null;
+  toolName?: string | null;
+  transcript?: string;
 }) {
+  const routeGuidance = (() => {
+    if (input.route?.intent.type === "list_by_district") {
+      return "這是完整選區名單：data 裡每位議員的姓名都必須各出現一次，不得漏人、重複姓名或自行增補。先直接報完整姓名名單。";
+    }
+
+    if (
+      input.route?.intent.type === "topic_search" ||
+      input.route?.intent.type === "policy_alignment_list" ||
+      input.route?.intent.type === "public_activity_list"
+    ) {
+      return "第一句先直接點出符合條件的具體議員姓名，再用精簡分組或例子補充；不得只講抽象政策而不報姓名。";
+    }
+
+    if (input.toolName === "lookup_taipei_village_chief") {
+      return "若使用者只問里長是誰，只回答里名、行政區與現任里長姓名；沒有被問時不要朗讀電話、地址或多餘的查證提醒。";
+    }
+
+    return "依使用者實際問題選取相關欄位作答，不要朗讀整份資料。";
+  })();
+
   return {
     output_modalities: ["audio"],
     tool_choice: "none",
@@ -455,12 +540,15 @@ export function createLocalFinalAnswerResponse(input: {
     },
     instructions:
       input.instructions ||
-      "直接根據剛取得的 function output 回答使用者。只產生這一個最終答案；不要說我查一下、我看一下、我整理一下或其他工具過場。found=true 且 status=current 時直接有把握回答，不要補大概或最好再查官方。",
+      `直接根據剛取得的 function output 完整回答使用者原問題「${String(
+        input.transcript || ""
+      ).slice(0, 240)}」。只產生這一個最終答案；第一句就開始講實質答案，不要說我查一下、我看一下、我整理一下、我來說清楚或其他工具過場。${routeGuidance} found=true 且 status=current 時直接有把握回答，不要補大概或最好再查官方。不得捏造 function output 沒有的人名、英文名字、數字或事件。`,
   };
 }
 
 export function createCachedCouncilorFinalResponse(route: CouncilorRealtimeRoute) {
   return createLocalFinalAnswerResponse({
+    route,
     instructions: `沿用上一輪已成功的 Councilor Local KB 結果回答這個 follow-up，不要再次查 Tool。intent=${route.intent.type}；entities=${route.entities.join(
       "、"
     )}；cached=${JSON.stringify(route.cachedResult)}。直接回答，不要提到快取或查詢流程。`,

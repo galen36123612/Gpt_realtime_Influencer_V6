@@ -22280,11 +22280,17 @@ import {
   createCouncilorRouterLog,
   createInitialLocalConversationContext,
   createLocalFinalAnswerResponse,
-  createSilentLocalToolResponse,
   routeCouncilorTranscript,
   updateCouncilorContextFromResult,
 } from "@/app/lib/councilorRealtimeRouter";
 import type { CouncilorRealtimeRoute } from "@/app/lib/councilorRealtimeRouter";
+import {
+  createDirectAnswerResponse,
+  createDirectWebSearchArguments,
+  createSyntheticFunctionCallEvent,
+  createSyntheticFunctionOutputEvent,
+  isBridgeOnlyAssistantResponse,
+} from "@/app/lib/realtimeResponseFlow";
 import { createWelcomeResponseEvent } from "@/app/lib/welcomeResponse";
 
 import {
@@ -22856,6 +22862,102 @@ function AppContent() {
     return false;
   };
 
+  const executeAndAppendDirectToolCall = async (input: {
+    toolName: string;
+    args: Record<string, unknown>;
+    callId: string;
+  }) => {
+    sendClientEvent(
+      createSyntheticFunctionCallEvent({
+        callId: input.callId,
+        toolName: input.toolName,
+        args: input.args,
+      }),
+      `(direct deterministic tool call: ${input.toolName})`
+    );
+
+    const result = await executeRealtimeTool({
+      name: input.toolName,
+      call_id: input.callId,
+      arguments: JSON.stringify(input.args),
+    });
+
+    sendClientEvent(
+      createSyntheticFunctionOutputEvent({
+        callId: input.callId,
+        output: serializeRealtimeToolResult(result),
+      }),
+      `(direct deterministic tool output: ${input.toolName})`
+    );
+
+    return result;
+  };
+
+  const runDirectLocalTool = async (input: {
+    toolName: string;
+    args: Record<string, unknown>;
+    routeId: string;
+    transcript: string;
+    route: CouncilorRealtimeRoute | null;
+    recentTurns: string[];
+  }) => {
+    try {
+      const localResult: any = await executeAndAppendDirectToolCall({
+        toolName: input.toolName,
+        args: input.args,
+        callId: `${input.routeId}_local`,
+      });
+      const shouldFallbackToWeb = Boolean(
+        input.toolName !== "web_search" &&
+          (localResult?.shouldSearchWeb || localResult?.shouldVerifyLatest)
+      );
+
+      if (shouldFallbackToWeb) {
+        await executeAndAppendDirectToolCall({
+          toolName: "web_search",
+          args: createDirectWebSearchArguments(
+            input.transcript,
+            input.recentTurns
+          ),
+          callId: `${input.routeId}_web`,
+        });
+      }
+
+      sendClientEvent(
+        {
+          type: "response.create",
+          response: createLocalFinalAnswerResponse({
+            routeId: input.routeId,
+            route: input.route,
+            toolName: input.toolName,
+            transcript: input.transcript,
+          }),
+        },
+        shouldFallbackToWeb
+          ? "(single final response after direct local + web tools)"
+          : "(single final response after direct local tool)"
+      );
+    } catch (err) {
+      console.error("💥 Direct local tool execution failed:", err);
+      postLog({
+        role: "system",
+        content: `[DIRECT TOOL FAILED] ${String(err).slice(0, 300)}`,
+        eventId: `direct_tool_fail_${Date.now()}`,
+      });
+      sendClientEvent(
+        {
+          type: "response.create",
+          response: createDirectAnswerResponse({
+            allowTools: false,
+            instructions:
+              "工具執行失敗。簡短向使用者說目前暫時無法完成這筆查詢，請他稍後再試；不要假裝已有查詢結果。",
+          }),
+        },
+        "(direct tool failure answer)"
+      );
+    }
+  };
+
   const sendResponseForUserText = (text: string, eventNameSuffix: string) => {
     if (!sessionToolsReadyRef.current) {
       console.error("Realtime response blocked: required tools are not configured yet");
@@ -22886,6 +22988,17 @@ function AppContent() {
 
     if (text) {
       recentUserTurnsRef.current = [...previousTurns, text].slice(-6);
+    }
+
+    if (!text.trim()) {
+      pendingLocalRouteRef.current = null;
+      return sendClientEvent(
+        {
+          type: "response.create",
+          response: createDirectAnswerResponse({ purpose: "inaudible" }),
+        },
+        `${eventNameSuffix} (inaudible clarification)`
+      );
     }
 
     if (councilorRoute?.cacheHit) {
@@ -22932,17 +23045,6 @@ function AppContent() {
         route: councilorRoute,
       };
 
-      const toolInstructions =
-        forcedTool === "lookup_shen_media_kb"
-          ? `請結合最近的使用者對話理解新聞、受訪、選戰或政策查詢：${queryTurns.join(
-              " → "
-            )}。直接呼叫 lookup_shen_media_kb；query 只放核心人物／事件關鍵字，並依 freshness 規則設定 requiresLatest。`
-          : councilorRoute
-            ? `deterministic councilor intent=${councilorRoute.intent.type}，使用 App 已解析的精確參數。`
-            : `請結合最近的使用者對話理解查詢線索：${queryTurns.join(
-                " → "
-              )}。直接呼叫 ${forcedTool}，不要先反覆追問。`;
-
       if (councilorRoute) {
         const routerLog = createCouncilorRouterLog({
           transcript: text,
@@ -22957,18 +23059,35 @@ function AppContent() {
         });
       }
 
-      return sendClientEvent(
-        {
-          type: "response.create",
-          response: createSilentLocalToolResponse({
-            forcedTool,
-            args: councilorRoute?.args,
-            instructions: toolInstructions,
-            routeId,
-          }),
-        },
-        `${eventNameSuffix} (silent forced tool: ${forcedTool})`
-      );
+      let directArgs = councilorRoute?.args || {};
+
+      if (!councilorRoute) {
+        directArgs = inferTaipeiCivicToolArguments(
+          forcedTool,
+          {},
+          queryTurns
+        );
+      }
+
+      if (forcedTool === "lookup_shen_media_kb") {
+        directArgs = inferShenMediaKBToolArguments(
+          directArgs,
+          queryTurns
+        );
+      } else if (forcedTool === "web_search") {
+        directArgs = createDirectWebSearchArguments(text, previousTurns);
+      }
+
+      void runDirectLocalTool({
+        toolName: forcedTool,
+        args: directArgs,
+        routeId,
+        transcript: text,
+        route: councilorRoute,
+        recentTurns: previousTurns,
+      });
+
+      return true;
     }
 
     pendingLocalRouteRef.current = null;
@@ -22976,7 +23095,7 @@ function AppContent() {
     return sendClientEvent(
       {
         type: "response.create",
-        response: { output_modalities: ["audio"] },
+        response: createDirectAnswerResponse({}),
       },
       eventNameSuffix
     );
@@ -23024,16 +23143,27 @@ function AppContent() {
           );
         }
 
-        const routeId = pendingLocalRouteRef.current?.routeId;
-        const followUpResponse: Record<string, any> = shouldFallbackToWeb
-          ? createSilentLocalToolResponse({
-              forcedTool: "web_search",
-              instructions: `本地 KB 沒有完全相符，或使用者要求的時間晚於資料快照、需要確認最新狀態。直接用 web_search 搜尋官方來源與可信公開資料，不要再要求使用者補充相同資訊。最近查詢脈絡：${lastCivicQueryTurnsRef.current.join(
-                " → "
-              )}`,
-              routeId: routeId || `web_fallback_${Date.now()}`,
-            })
-          : createLocalFinalAnswerResponse({ routeId });
+        const pendingRoute = pendingLocalRouteRef.current;
+        const routeId = pendingRoute?.routeId || `tool_route_${Date.now()}`;
+
+        if (shouldFallbackToWeb) {
+          await executeAndAppendDirectToolCall({
+            toolName: "web_search",
+            args: createDirectWebSearchArguments(
+              pendingRoute?.transcript || lastCivicQueryTurnsRef.current.at(-1) || "",
+              lastCivicQueryTurnsRef.current
+            ),
+            callId: `${routeId}_web`,
+          });
+        }
+
+        const followUpResponse = createLocalFinalAnswerResponse({
+          routeId,
+          route: pendingRoute?.route,
+          toolName: pendingRoute?.forcedTool || callsToProcess[0]?.name,
+          transcript:
+            pendingRoute?.transcript || lastCivicQueryTurnsRef.current.at(-1) || "",
+        });
 
         sendClientEvent(
           {
@@ -23041,7 +23171,7 @@ function AppContent() {
             response: followUpResponse,
           },
           shouldFallbackToWeb
-            ? "(silent fallback web search after local KB)"
+            ? "(single final response after local + direct web tools)"
             : "(single final response after tools)"
         );
       } catch (err) {
@@ -23316,14 +23446,6 @@ function AppContent() {
           sendWelcomeOnce();
         }
 
-        if (
-          eventType === "response.function_call_arguments.done" &&
-          eventData?.call_id &&
-          isAppManagedRealtimeToolName(eventData?.name)
-        ) {
-          processAppManagedToolCalls([eventData]);
-        }
-
         if (eventType === "conversation.item.input_audio_transcription.completed") {
           const raw = eventData.transcript || eventData.text || "";
           const normalized = raw && raw.trim() && raw.trim() !== "\n" ? raw.trim() : "[inaudible]";
@@ -23514,6 +23636,13 @@ function AppContent() {
             }
           }
 
+          const responsePurpose = eventData?.response?.metadata?.response_purpose;
+          const shouldRetryBridge =
+            responsePurpose !== "welcome" &&
+            responsePurpose !== "inaudible" &&
+            responsePurpose !== "bridge_retry" &&
+            (!finalText || isBridgeOnlyAssistantResponse(finalText));
+
           try {
             const citations = extractFileCitationsFromOutput(eventData?.response?.output);
 
@@ -23559,10 +23688,28 @@ function AppContent() {
             });
           }
 
-          const responsePurpose = eventData?.response?.metadata?.response_purpose;
           const pendingRoute = pendingLocalRouteRef.current;
 
-          if (pendingRoute && responsePurpose !== "silent_local_tool") {
+          if (shouldRetryBridge) {
+            postLog({
+              role: "system",
+              content: `[BRIDGE-ONLY RETRY] ${finalText || "(empty response)"}`,
+              eventId: `bridge_retry_${Date.now()}`,
+            });
+            sendClientEvent(
+              {
+                type: "response.create",
+                response: createDirectAnswerResponse({ purpose: "bridge_retry" }),
+              },
+              "(automatic retry after bridge-only response)"
+            );
+          }
+
+          if (
+            pendingRoute &&
+            responsePurpose !== "silent_local_tool" &&
+            !shouldRetryBridge
+          ) {
             const responseLatencyMs = Date.now() - pendingRoute.startedAt;
 
             if (pendingRoute.route) {
@@ -23804,7 +23951,15 @@ ${SHEN_MEDIA_KB_TOOL_INSTRUCTIONS}
 - 當問題需要本地 KB 快照之後的最新外部資訊（新聞、價格、政策、版本更新）時，再呼叫 web_search，並用搜尋結果回答、附上來源。
 - 不得用模型記憶猜里長姓名、里長電話、市議員姓名或聯絡方式。
 - 如果使用者語音聽起來不清楚、內容不完整、像背景音，或和目前對話脈絡明顯不相關，不要直接推銷或回答；請先說：「我剛剛沒有聽清楚，可以再說一次嗎？」
-- 如果轉錄看起來是英文短句，例如 Yeah、Why、Bye、way over there，但前後脈絡主要是中文，請優先判斷可能是誤辨識，先確認，不要直接結束對話或切到英文回覆。`;
+- 如果轉錄看起來是英文短句，例如 Yeah、Why、Bye、way over there，但前後脈絡主要是中文，請優先判斷可能是誤辨識，先確認，不要直接結束對話或切到英文回覆。
+
+# 每回合必須完成答案
+
+- 第一個句子就回答實質內容，不要先說「我查一下／我整理一下／我來說清楚／接下來回答」。
+- 不得只播放回答預告就停止；每個使用者問題必須在同一個 final response 裡回答完。
+- 地區議員名單必須逐字依 Tool data 回答，每個姓名一次，不得漏人、重複或自行補人。
+- 不得插入使用者與可靠資料中沒有的英文人名、例子、數字或事件。
+- 以 AI 市長角色回答政策支持或採納時，說明政策判準與可能方向，並區分正式承諾；不要退回泛稱自己只是語音助手而拒絕回答。`;
 
     const webSearchTool = {
       type: "function",

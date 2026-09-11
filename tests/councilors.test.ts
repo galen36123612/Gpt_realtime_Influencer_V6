@@ -121,6 +121,26 @@ test("normalizes every district to its complete constituency roster", () => {
   }
 });
 
+test("keeps quick list payload compact for low-latency Realtime answers", () => {
+  const result = queryCouncilors({
+    hasPublicEventWithShen: true,
+    detail: "quick",
+  });
+  const serialized = JSON.stringify(result);
+
+  assert.equal(result.found, true);
+  assert.ok(serialized.length < 30000, `quick payload was ${serialized.length} chars`);
+  assert.equal(
+    result.data.every(
+      (item: any) =>
+        !("policyTop3" in item) &&
+        !("sharedPolicyTopics" in item.relationToShen) &&
+        Array.isArray(item.confirmedPublicEventHighlights)
+    ),
+    true
+  );
+});
+
 test("keeps 陳怡君 current office separate from 2026 nomination status", () => {
   const chen = TAIPEI_COUNCILORS.find(({ name }) => name === "陳怡君");
   assert.equal(chen?.status, "current");

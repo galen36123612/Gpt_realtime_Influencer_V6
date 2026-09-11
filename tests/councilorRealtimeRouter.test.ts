@@ -146,6 +146,21 @@ test("T8 全台北公開合作：does not inherit stale 中山 district", () => 
   assert.ok(constituencies.size > 1);
 });
 
+test("routes natural public-trip wording without waiting for the model", () => {
+  for (const text of [
+    "那你有跟其他市議員一起公開行程嗎？",
+    "你有跟其他市議員有公開行程或公開站台嗎？",
+  ]) {
+    const { route } = requireRoute(text);
+    assert.equal(route?.intent.type, "public_activity_list", text);
+    assert.deepEqual(
+      route?.args,
+      { hasPublicEventWithShen: true, detail: "quick" },
+      text
+    );
+  }
+});
+
 test("T9 最近媒體：Media KB wins over Councilor routing", () => {
   const councilor = routeCouncilorTranscript(
     "最近你有什麼採訪？",
@@ -189,6 +204,47 @@ test("follow-up 這兩位 reuses a successful quick result without another tool"
   const cachedResponse = createCachedCouncilorFinalResponse(followUp.route!);
   assert.deepEqual(cachedResponse.output_modalities, ["audio"]);
   assert.equal(cachedResponse.tool_choice, "none");
+});
+
+test("does not apply a stale topic after a Village turn", () => {
+  const { route } = requireRoute("那有議員跟你提的政見方向一致嗎？", {
+    activeTopic: "內湖交通",
+    activeToolDomain: "village",
+  });
+
+  assert.equal(route?.intent.type, "policy_alignment_list");
+  assert.deepEqual(route?.args, {
+    party: "民主進步黨",
+    detail: "quick",
+  });
+});
+
+test("resolves a support follow-up to the active councilor", () => {
+  const first = requireRoute("林世宗提了什麼政見？");
+  const executed: any = executeCouncilorTool(first.route!.forcedTool!, first.route!.args);
+  const context = updateCouncilorContextFromResult(first.context, executed.result);
+  const followUp = requireRoute("那市長你會支持他嗎？", context);
+
+  assert.equal(followUp.route?.intent.type, "relationship");
+  assert.deepEqual(followUp.route?.entities, ["林世宗"]);
+  assert.equal(followUp.route?.cacheHit, true);
+});
+
+test("a known councilor name alone defaults to a profile route", () => {
+  const { route } = requireRoute("那顏若芳呢？");
+  assert.deepEqual(route?.args, { name: "顏若芳", detail: "profile" });
+});
+
+test("district final instructions require an exact non-duplicated roster", () => {
+  const { route } = requireRoute("北投區有哪些市議員？");
+  const final = createLocalFinalAnswerResponse({
+    routeId: "route-district",
+    route,
+    transcript: "北投區有哪些市議員？",
+  });
+
+  assert.match(final.instructions, /每位議員的姓名都必須各出現一次/);
+  assert.match(final.instructions, /不得漏人、重複姓名/);
 });
 
 test("all forced Local Tools are silent and only the final response uses audio", () => {

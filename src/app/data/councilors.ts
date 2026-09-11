@@ -3122,18 +3122,22 @@ function projectCouncilor(
   const currentAge = calculateAge(item.birthDate);
   const quick = {
     ...identity,
-    policyTop3: item.policyTop3,
     policyFocusTags: item.policyFocusTags,
+    realtimeSummary: item.relationToShen.realtimeSummary,
     relationToShen: {
       level: item.relationToShen.level,
-      summary: item.relationToShen.summary,
       relationshipTypes: item.relationToShen.relationshipTypes,
-      sharedPolicyTopics: item.relationToShen.sharedPolicyTopics,
-      realtimeSummary: item.relationToShen.realtimeSummary,
-      confirmedPublicEvents: item.relationToShen.confirmedPublicEvents.slice(0, 3),
-      caution: item.relationToShen.caution,
-      verifiedAt: item.relationToShen.verifiedAt,
+      publicEventCount: item.relationToShen.confirmedPublicEvents.length,
     },
+    confirmedPublicEventHighlights: item.relationToShen.confirmedPublicEvents
+      .slice(0, 2)
+      .map(({ date, title, eventType, summary, mediaEventId }) => ({
+        date,
+        title,
+        eventType,
+        summary,
+        ...(mediaEventId ? { mediaEventId } : {}),
+      })),
     ...(item.partyNomination2026
       ? { partyNomination2026: item.partyNomination2026 }
       : {}),
@@ -3191,6 +3195,17 @@ function projectCouncilor(
       backgroundSummary: item.backgroundSummary,
       education: item.education,
       experience: item.experience,
+      policyTop3: item.policyTop3,
+      relationToShen: {
+        level: item.relationToShen.level,
+        summary: item.relationToShen.summary,
+        relationshipTypes: item.relationToShen.relationshipTypes,
+        sharedPolicyTopics: item.relationToShen.sharedPolicyTopics,
+        realtimeSummary: item.relationToShen.realtimeSummary,
+        confirmedPublicEvents: item.relationToShen.confirmedPublicEvents.slice(0, 3),
+        caution: item.relationToShen.caution,
+        verifiedAt: item.relationToShen.verifiedAt,
+      },
     };
   }
 

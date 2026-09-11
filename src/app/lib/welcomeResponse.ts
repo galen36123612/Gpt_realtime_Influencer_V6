@@ -14,6 +14,7 @@ export function createWelcomeResponseEvent() {
       input: [],
       output_modalities: ["audio"],
       tool_choice: "none",
+      metadata: { response_purpose: "welcome" },
       instructions: `Say exactly the following Traditional Chinese sentence, with no preface, acknowledgement, explanation, or additional words:\n${WELCOME_MESSAGE}`,
     },
   } as const;
