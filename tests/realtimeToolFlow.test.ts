@@ -20,6 +20,19 @@ test("live App uses the stable forced-tool lifecycle and hides persona control t
   );
   assert.ok(
     liveApp.indexOf("isShenPersonaProfileQuestion(normalizedText)") <
-      liveApp.indexOf("selectShenMediaKBTool(normalizedText")
+      liveApp.indexOf("routeShenMediaTranscript(")
   );
+  assert.match(liveApp, /media comparison fast path/);
+  assert.match(liveApp, /REALTIME_RESPONSE_TRACE/);
+});
+
+test("transcript runtime suppresses every silent Local Tool output event", () => {
+  const source = readFileSync(
+    new URL("../src/app/hooks/useHandleServerEvent.ts", import.meta.url),
+    "utf8"
+  );
+  const liveHook = source.slice(source.lastIndexOf("//0513 fixing user, assistant bubble"));
+
+  assert.match(liveHook, /shouldSuppressRealtimeAssistantOutput/);
+  assert.match(liveHook, /isHidden: true/);
 });

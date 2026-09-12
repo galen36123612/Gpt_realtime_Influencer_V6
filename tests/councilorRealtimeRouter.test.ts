@@ -281,3 +281,41 @@ test("all forced Local Tools are silent and only the final response uses audio",
   assert.match(final.instructions, /AI 市長沈伯洋/);
   assert.match(final.instructions, /第一人稱、親切、有現場感/);
 });
+
+test("DPP proposal adoption is affirmative-first and reuses policy context", () => {
+  const first = requireRoute("林世宗提了什麼政見？");
+  const executed: any = executeCouncilorTool(
+    first.route!.forcedTool!,
+    first.route!.args
+  );
+  const context = updateCouncilorContextFromResult(
+    first.context,
+    executed.result
+  );
+  const followUp = requireRoute("那你會採納這些意見嗎？", context);
+
+  assert.equal(followUp.route?.intent.type, "proposal_adoption");
+  assert.equal(followUp.route?.cacheHit, true);
+  assert.equal(followUp.route?.forcedTool, null);
+  assert.deepEqual(followUp.route?.entities, ["林世宗"]);
+
+  const response = createCachedCouncilorFinalResponse(
+    followUp.route!,
+    "adoption-route"
+  );
+  assert.equal(response.metadata.local_route_id, "adoption-route");
+  assert.match(response.instructions, /會，這個方向我會採納/);
+  assert.match(response.instructions, /優化、擴大或落地/);
+  assert.doesNotMatch(response.instructions, /我幫你查一下|Let me/);
+});
+
+test("direct proposal-adoption question requests full grounded detail", () => {
+  const { route } = requireRoute("你會採納顏若芳的提案嗎？");
+
+  assert.equal(route?.intent.type, "proposal_adoption");
+  assert.deepEqual(route?.args, { name: "顏若芳", detail: "full" });
+
+  const response = createLocalFinalAnswerResponse({ route });
+  assert.match(response.instructions, /第一句先明確回答會不會採納/);
+  assert.match(response.instructions, /好政策不分黨派/);
+});

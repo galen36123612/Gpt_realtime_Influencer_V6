@@ -1,5 +1,17 @@
 export const SHEN_MEDIA_TOOL_NAME = "lookup_shen_media_kb" as const;
 
+export type ShenMediaRouteIntent =
+  | "media_lookup"
+  | "incumbent_policy_comparison";
+
+export interface ShenMediaRouteDecision {
+  toolName: typeof SHEN_MEDIA_TOOL_NAME;
+  intent: ShenMediaRouteIntent;
+  topic?: string;
+  args: Record<string, unknown>;
+  fastPath: boolean;
+}
+
 const MAX_CONTEXT_TURNS = 6;
 
 function compactText(value: string) {
@@ -17,6 +29,46 @@ const MEDIA_OR_CAMPAIGN_INTENT_PATTERN =
 
 const CIVIC_DIRECTORY_PATTERN =
   /(?:里長|里辦公處|里辦公室)|(?:市議員|議員).*(?:哪些|有誰|名單|幾位|電話|Email|信箱|聯絡|黨籍|選區|服務處|辦公室|生日|年齡|幾歲|學歷|經歷|背景)/i;
+
+const MEDIA_POLICY_TOPICS = [
+  { topic: "內湖交通", pattern: /內湖交通|內科(?:交通|塞車)|內湖(?:塞車|通勤)/ },
+  { topic: "內湖淹水", pattern: /內湖淹水|內湖(?:防災|積水)/ },
+  { topic: "兒童保護", pattern: /兒虐|兒童保護|兒少安全/ },
+  { topic: "老屋延壽", pattern: /老屋延壽|老屋|老宅|危老/ },
+  { topic: "運動政策", pattern: /運動政策|健身小巴|超級運動中心|足球場/ },
+] as const;
+
+function explicitMediaPolicyTopic(value: string) {
+  const text = compactText(value);
+  return MEDIA_POLICY_TOPICS.find(({ pattern }) => pattern.test(text))?.topic;
+}
+
+function mostRecentMediaPolicyTopic(turns: string[]) {
+  for (const turn of [...turns].reverse()) {
+    const topic = explicitMediaPolicyTopic(turn);
+    if (topic) return topic;
+  }
+
+  return undefined;
+}
+
+function requiresLatestVerification(value: string) {
+  const text = compactText(value);
+  return /今天最新|現在最新|目前最新|最新進度|最新成果|截至現在|現在做到哪|目前做到哪/.test(
+    text
+  );
+}
+
+function isIncumbentPolicyComparison(value: string) {
+  const text = compactText(value);
+  const mentionsIncumbent = /蔣萬安|蔣市府|現在市府|現任市府/.test(text);
+  const asksComparison =
+    /不是也|不也|也有做|也做了|沒有做|沒做|有做嗎|做過嗎|做了什麼|有沒有做|沒有改善|沒改善|有成績|沒成績|成效|差在哪|有什麼不同/.test(
+      text
+    );
+
+  return mentionsIncumbent && asksComparison;
+}
 
 /**
  * Deterministically routes known Shen campaign/news questions to the local KB.
@@ -67,6 +119,64 @@ export function selectShenMediaKBTool(
   }
 
   return null;
+}
+
+/**
+ * Adds a narrow deterministic route for short policy-comparison follow-ups
+ * such as "蔣萬安不是也有做？". The topic may be omitted in the current
+ * utterance, so the most recent explicit policy topic is carried forward.
+ */
+export function routeShenMediaTranscript(
+  userText: string,
+  recentUserTurns: string[] = [],
+  activePolicyTopic?: string
+): ShenMediaRouteDecision | null {
+  const explicitTopic = explicitMediaPolicyTopic(userText);
+  const recentTopic = mostRecentMediaPolicyTopic(recentUserTurns.slice(-3));
+  const canReuseStoredTopic = /這些|那些|這個|那個|前面|剛剛/.test(
+    compactText(userText)
+  );
+  const topic =
+    explicitTopic ||
+    recentTopic ||
+    (canReuseStoredTopic ? activePolicyTopic : undefined);
+  const hasKnownComparisonTopic = MEDIA_POLICY_TOPICS.some(
+    ({ topic: knownTopic }) => knownTopic === topic
+  );
+  const requiresLatest = requiresLatestVerification(userText);
+
+  if (
+    isIncumbentPolicyComparison(userText) &&
+    topic &&
+    hasKnownComparisonTopic
+  ) {
+    return {
+      toolName: SHEN_MEDIA_TOOL_NAME,
+      intent: "incumbent_policy_comparison",
+      topic,
+      args: {
+        query: `${topic} 蔣萬安 市府措施 執行比較`,
+        person: "蔣萬安",
+        latest: true,
+        limit: 1,
+        requiresLatest,
+      },
+      // Known snapshot facts can be looked up synchronously in App and sent
+      // straight to one final audio response. Latest-status questions still
+      // use the normal tool/Web fallback lifecycle.
+      fastPath: !requiresLatest,
+    };
+  }
+
+  if (!selectShenMediaKBTool(userText, recentUserTurns)) return null;
+
+  return {
+    toolName: SHEN_MEDIA_TOOL_NAME,
+    intent: "media_lookup",
+    ...(explicitTopic ? { topic: explicitTopic } : {}),
+    args: {},
+    fastPath: false,
+  };
 }
 
 function taipeiDateParts(now: Date) {

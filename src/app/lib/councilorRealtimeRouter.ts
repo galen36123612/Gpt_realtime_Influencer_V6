@@ -17,8 +17,10 @@ export interface LocalConversationContext {
   activeConstituency?: number;
   activeCouncilorNames?: string[];
   activeTopic?: CouncilorPolicyTopic;
+  activePolicyTopic?: string;
   activeToolDomain?: "councilor" | "media" | "village" | "policy";
   lastCouncilorToolResult?: unknown;
+  lastMediaToolResult?: unknown;
 }
 
 export type CouncilorIntent =
@@ -27,6 +29,7 @@ export type CouncilorIntent =
   | { type: "topic_search"; topic: CouncilorPolicyTopic; party?: string }
   | { type: "profile"; name: string; names: string[] }
   | { type: "policy"; name: string; names: string[] }
+  | { type: "proposal_adoption"; name: string; names: string[] }
   | { type: "relationship"; name: string; names: string[] }
   | { type: "events"; name: string; names: string[] }
   | { type: "public_activity_list"; party?: string }
@@ -158,7 +161,7 @@ function referencedNames(
 
   const value = compact(text);
   if (
-    /這兩位|那兩位|這些人|那些人|他們|她們|這幾位|剛剛那些/.test(value)
+    /這兩位|那兩位|這些人|那些人|他們|她們|這幾位|剛剛那些|這些意見|這些政見|這些提案|這幾個提案|上述提案|上述政見/.test(value)
   ) {
     return context.activeCouncilorNames || [];
   }
@@ -176,6 +179,12 @@ function referencedNames(
 
 function hasPolicyIntent(text: string) {
   return /政見|訴求|政策|關心什麼|關注什麼|主張什麼|方向一樣/.test(compact(text));
+}
+
+function hasProposalAdoptionIntent(text: string) {
+  return /採納|納入|接受.*建議|這些意見|這些政見|這些提案|這個提案|這項政策|會不會做|會做嗎|當選.*(?:推|做)|市府.*(?:推|做)/.test(
+    compact(text)
+  );
 }
 
 function hasEventIntent(text: string) {
@@ -198,6 +207,7 @@ function hasProfileIntent(text: string) {
 
 function detailForIntent(intent: Exclude<CouncilorIntent, null>) {
   if (intent.type === "policy") return "policy" as CouncilorNameDetail;
+  if (intent.type === "proposal_adoption") return "full" as CouncilorNameDetail;
   if (intent.type === "relationship") return "relationship" as CouncilorNameDetail;
   if (intent.type === "events") return "events" as CouncilorNameDetail;
   if (intent.type === "profile") return "profile" as CouncilorNameDetail;
@@ -222,6 +232,12 @@ function cacheSupportsIntent(
     const item = byName.get(name);
     if (!item) return false;
     if (intent.type === "policy") return Boolean(item.policyTop3 || item.realtimeSummary);
+    if (intent.type === "proposal_adoption") {
+      return Boolean(
+        item.party &&
+          (item.policyTop3 || item.policyFocusTags || item.realtimeSummary?.policies)
+      );
+    }
     if (intent.type === "relationship") {
       return Boolean(item.relationToShen || item.realtimeSummary);
     }
@@ -273,6 +289,9 @@ export function detectCouncilorIntent(
   if (names.length) {
     const named = { name: names[0], names };
     if (hasEventIntent(text)) return { type: "events", ...named };
+    if (hasProposalAdoptionIntent(text)) {
+      return { type: "proposal_adoption", ...named };
+    }
     if (hasPolicyIntent(text)) return { type: "policy", ...named };
     if (hasRelationshipIntent(text)) return { type: "relationship", ...named };
     if (hasProfileIntent(text) || /議員/.test(text)) return { type: "profile", ...named };
@@ -435,6 +454,7 @@ export function routeCouncilorTranscript(
     ...(topic
       ? {
           activeTopic: topic,
+          activePolicyTopic: topic,
           activeToolDomain: "policy" as const,
         }
       : {}),
@@ -529,6 +549,14 @@ export function createLocalFinalAnswerResponse(input: {
       return "第一句先直接點出符合條件的具體議員姓名，再用精簡分組或例子補充；不得只講抽象政策而不報姓名。";
     }
 
+    if (input.route?.intent.type === "proposal_adoption") {
+      return "這是政策採納追問：第一句先明確回答會不會採納。若 data 顯示是現任民進黨議員，且政策與 sharedPolicyTopics 或 realtimeSummary 有明確交集，請說『會，這個方向我會採納』，接著具體說會怎麼優化、擴大或落地；不要先講程序或用空泛的『會審慎評估』迴避。若沒有已確認交集，改說會納入市政評估，不得捏造已共同提案。其他黨議員則用『好政策不分黨派』起手，再依可行性說明。";
+    }
+
+    if (input.route?.intent.type === "relationship") {
+      return "依原問題回答合作或支持關係。若使用者是在問是否支持該民進黨議員，先清楚說選舉上會支持黨正式提名的台北隊夥伴；政策是否採納則依 data 的政策交集分開說，不要用空泛中立句逃避。";
+    }
+
     if (input.toolName === "lookup_taipei_village_chief") {
       return "若使用者只問里長是誰，只回答里名、行政區與現任里長姓名；沒有被問時不要朗讀電話、地址或多餘的查證提醒。";
     }
@@ -553,10 +581,21 @@ export function createLocalFinalAnswerResponse(input: {
   };
 }
 
-export function createCachedCouncilorFinalResponse(route: CouncilorRealtimeRoute) {
+export function createCachedCouncilorFinalResponse(
+  route: CouncilorRealtimeRoute,
+  routeId?: string
+) {
+  const adoptionGuidance =
+    route.intent.type === "proposal_adoption"
+      ? "這是政策採納追問。第一句先明確回答會不會採納；現任民進黨議員且政策有明確交集時，直接說『會，這個方向我會採納』，再說我會怎麼優化、擴大或落地。不要只回答審慎評估，也不得捏造已共同提案。"
+      : route.intent.type === "relationship"
+        ? "若使用者是在問是否支持該民進黨議員，先清楚說選舉上會支持黨正式提名的台北隊夥伴；政策採納要與選舉支持分開說。"
+      : "";
+
   return createLocalFinalAnswerResponse({
     route,
-    instructions: `沿用上一輪已成功的 Councilor Local KB 結果回答這個 follow-up，不要再次查 Tool。intent=${route.intent.type}；entities=${route.entities.join(
+    routeId,
+    instructions: `${adoptionGuidance}沿用上一輪已成功的 Councilor Local KB 結果回答這個 follow-up，不要再次查 Tool。intent=${route.intent.type}；entities=${route.entities.join(
       "、"
     )}；cached=${JSON.stringify(route.cachedResult)}。直接回答，不要提到快取或查詢流程。`,
   });

@@ -9,6 +9,7 @@ import {
 } from "../src/app/data/shenMediaKB.ts";
 import {
   inferShenMediaKBToolArguments,
+  routeShenMediaTranscript,
   selectShenMediaKBTool,
 } from "../src/app/lib/shenMediaRouting.ts";
 
@@ -101,4 +102,53 @@ test("infers Taipei-relative dates from fragmented turns", () => {
       requiresLatest: false,
     }
   );
+});
+
+test("routes omitted-topic Chiang follow-up to one-record Local KB fast path", () => {
+  const route = routeShenMediaTranscript(
+    "這些蔣萬安沒有做嗎？",
+    ["那你會怎麼解決內湖交通呢？"],
+    "內湖交通"
+  );
+
+  assert.ok(route);
+  assert.equal(route.intent, "incumbent_policy_comparison");
+  assert.equal(route.topic, "內湖交通");
+  assert.equal(route.fastPath, true);
+  assert.deepEqual(route.args, {
+    query: "內湖交通 蔣萬安 市府措施 執行比較",
+    person: "蔣萬安",
+    latest: true,
+    limit: 1,
+    requiresLatest: false,
+  });
+
+  const executed = executeShenMediaKBTool(route.toolName, route.args);
+  assert.equal(executed.handled, true);
+  assert.equal(executed.result.found, true);
+  assert.equal(executed.result.count, 1);
+  assert.equal(executed.result.data[0]?.id, "2026-06-17-neihu-traffic");
+  assert.match(executed.result.data[0]?.keyFacts.join(" "), /瑞光路 358 巷/);
+  assert.match(executed.result.data[0]?.keyFacts.join(" "), /6\.07%/);
+  assert.ok(
+    executed.result.data[0]?.sources.some(
+      ({ sourceType }: { sourceType: string }) =>
+        sourceType === "official_government"
+    )
+  );
+  assert.equal(executed.result.shouldSearchWeb, false);
+  assert.equal(executed.result.shouldVerifyLatest, false);
+});
+
+test("latest Chiang comparison keeps the normal Tool and Web-freshness path", () => {
+  const route = routeShenMediaTranscript(
+    "蔣萬安目前最新做到哪裡，不是也有做嗎？",
+    ["我們剛剛在談內湖交通"],
+    "內湖交通"
+  );
+
+  assert.ok(route);
+  assert.equal(route.intent, "incumbent_policy_comparison");
+  assert.equal(route.fastPath, false);
+  assert.equal(route.args.requiresLatest, true);
 });
