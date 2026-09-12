@@ -921,6 +921,10 @@ import { useEvent } from "@/app/contexts/EventContext";
 import { runGuardrailClassifier } from "@/app/lib/callOai";
 import { isAppManagedRealtimeToolName } from "@/app/lib/civicToolRouting";
 import { resolveRealtimeAssistantItemId } from "@/app/lib/realtimeTranscriptIds";
+import {
+  createRealtimeResponseVisibilityState,
+  shouldSuppressRealtimeAssistantOutput,
+} from "@/app/lib/realtimeResponseVisibility";
 import { sanitizeWelcomeTranscript } from "@/app/lib/welcomeResponse";
 
 export interface UseHandleServerEventParams {
@@ -955,6 +959,9 @@ export function useHandleServerEvent({
 
   const assistantDeltasRef = useRef<{ [itemId: string]: string }>({});
   const handledFunctionCallIdsRef = useRef<Set<string>>(new Set());
+  const responseVisibilityRef = useRef(
+    createRealtimeResponseVisibilityState()
+  );
 
   // One response can emit transcript/content/output completion events. Pin
   // every response output to one concrete item ID so they update one bubble.
@@ -1280,12 +1287,50 @@ export function useHandleServerEvent({
     const event: any = serverEvent;
     logServerEvent(serverEvent);
 
+    if (
+      shouldSuppressRealtimeAssistantOutput(
+        event,
+        responseVisibilityRef.current
+      )
+    ) {
+      const itemIds = new Set<string>();
+      const directItemId = String(
+        event?.item_id || event?.output_item_id || event?.item?.id || ""
+      ).trim();
+
+      if (directItemId) itemIds.add(directItemId);
+
+      if (Array.isArray(event?.response?.output)) {
+        for (const outputItem of event.response.output) {
+          if (outputItem?.type === "message" && outputItem?.role === "assistant") {
+            const outputItemId = String(outputItem?.id || "").trim();
+            if (outputItemId) itemIds.add(outputItemId);
+          }
+        }
+      }
+
+      for (const itemId of itemIds) {
+        if (transcriptItemExists(itemId)) {
+          updateTranscriptMessage(itemId, "", false);
+          updateTranscriptItem(itemId, {
+            status: "DONE",
+            isHidden: true,
+          });
+        }
+        delete assistantDeltasRef.current[itemId];
+      }
+
+      return;
+    }
+
     switch (event.type) {
       case "session.created": {
         if (event.session?.id) {
           assistantDeltasRef.current = {};
           handledFunctionCallIdsRef.current.clear();
           assistantItemIdsByResponseOutputRef.current = {};
+          responseVisibilityRef.current =
+            createRealtimeResponseVisibilityState();
           setSessionStatus("CONNECTED");
 
           // 不在這裡新增空白 welcome bubble。

@@ -463,6 +463,8 @@ export const SHEN_MEDIA_EVENTS: ShenMediaEvent[] = [
       "沈伯洋公開提出內湖交通多層方案：企業錯峰上下班、彈性工時、持續捷運建設、電動小巴最後一哩、住宅與都市規劃。",
       "公開說法也提到用市府誘因鼓勵企業把彈性工時與 ESG 連結。",
       "沈伯洋自己也承認蔣市府曾提出部分類似方向，因此這題核心不是『誰先想到』，而是執行。",
+      "北市府公開資料顯示，既有措施包含堤頂大道與瑞光路 358 巷分流、新增堤頂交流道北上入口引道、新闢東環幹線，以及內科與南軟雙園接駁。",
+      "北市府公布內科 7 條幹道下午尖峰旅行時間平均下降 6.07%，其中港墘路降幅 11.45%；這些是市府公布成果，回答時應清楚歸因。",
     ],
     shenPublicPosition: [
       "東環段完成前的交通黑期不能只等捷運，要同步處理企業時間、接駁、住宅與既有交通。",
@@ -472,6 +474,7 @@ export const SHEN_MEDIA_EVENTS: ShenMediaEvent[] = [
       "被問『蔣萬安不是也想到這些』時要直接承認很多工具不是新發明，再把比較拉回企業誘因、最後一哩、通勤時間與 KPI。",
     sources: [
       { label: "沈伯洋競選官網 2026-06-17", url: "https://puma.taipei/policies/20260617", sourceType: "official_campaign", publishedAt: "2026-06-17" },
+      { label: "臺北市政府：市府積極改善內湖交通，旅行時間下降 6.07%", url: "https://www.gov.taipei/News_Content.aspx?n=F0DDAF49B89E9413&s=B2603ED5E6FD0229", sourceType: "official_government", publishedAt: "2026-08-16" },
     ],
   },
 ];

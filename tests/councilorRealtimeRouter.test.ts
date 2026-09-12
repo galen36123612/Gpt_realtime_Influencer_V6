@@ -189,6 +189,66 @@ test("routes natural public-trip wording and the 北投居 STT variant", () => {
   });
 });
 
+test("district-only follow-up keeps the previous councilor-list intent", () => {
+  const first = requireRoute("台北市中山區有哪些議員？");
+  const executed: any = executeCouncilorTool(
+    first.route!.forcedTool!,
+    first.route!.args
+  );
+  const context = updateCouncilorContextFromResult(
+    first.context,
+    executed.result
+  );
+  const followUp = requireRoute("那北投區呢？", context);
+
+  assert.equal(followUp.route?.intent.type, "list_by_district");
+  assert.deepEqual(followUp.route?.args, {
+    district: "北投區",
+    detail: "quick",
+  });
+
+  const result: any = executeCouncilorTool(
+    followUp.route!.forcedTool!,
+    followUp.route!.args
+  );
+  assert.equal(result.result.constituency, 1);
+  assert.equal(result.result.count, 11);
+});
+
+test("public-standup follow-up stays global instead of inheriting a stale district", () => {
+  const district = requireRoute("北投區有哪些議員？");
+  const districtResult: any = executeCouncilorTool(
+    district.route!.forcedTool!,
+    district.route!.args
+  );
+  const districtContext = updateCouncilorContextFromResult(
+    district.context,
+    districtResult.result
+  );
+
+  const activity = requireRoute(
+    "我想知道你公開為哪個市議員站台",
+    districtContext
+  );
+  assert.equal(activity.route?.intent.type, "public_activity_list");
+  assert.equal(activity.route?.globalScope, true);
+  assert.equal("district" in activity.route!.args, false);
+
+  const activityResult: any = executeCouncilorTool(
+    activity.route!.forcedTool!,
+    activity.route!.args
+  );
+  const activityContext = updateCouncilorContextFromResult(
+    activity.context,
+    activityResult.result
+  );
+  const more = requireRoute("那還有哪些議員", activityContext);
+
+  assert.equal(more.route?.intent.type, "public_activity_list");
+  assert.equal(more.route?.globalScope, true);
+  assert.equal("district" in more.route!.args, false);
+});
+
 test("routes 林亮君 birthday, education and background to profile detail", () => {
   const { route } = requireRoute("我想知道林亮君生日學歷背景");
   assert.deepEqual(route?.args, { name: "林亮君", detail: "profile" });
@@ -280,4 +340,54 @@ test("all forced Local Tools are silent and only the final response uses audio",
   assert.equal(final.metadata.response_purpose, "local_tool_final_answer");
   assert.match(final.instructions, /AI 市長沈伯洋/);
   assert.match(final.instructions, /第一人稱、親切、有現場感/);
+});
+
+test("DPP proposal adoption is affirmative-first and reuses policy context", () => {
+  const first = requireRoute("林世宗提了什麼政見？");
+  const executed: any = executeCouncilorTool(
+    first.route!.forcedTool!,
+    first.route!.args
+  );
+  const context = updateCouncilorContextFromResult(
+    first.context,
+    executed.result
+  );
+  const followUp = requireRoute("那你會採納這些意見嗎？", context);
+
+  assert.equal(followUp.route?.intent.type, "proposal_adoption");
+  assert.equal(followUp.route?.cacheHit, true);
+  assert.equal(followUp.route?.forcedTool, null);
+  assert.deepEqual(followUp.route?.entities, ["林世宗"]);
+
+  const response = createCachedCouncilorFinalResponse(
+    followUp.route!,
+    "adoption-route"
+  );
+  assert.equal(response.metadata.local_route_id, "adoption-route");
+  assert.match(response.instructions, /會，好的建議我們都會採納/);
+  assert.match(response.instructions, /優化、擴大或落地/);
+  assert.doesNotMatch(response.instructions, /我幫你查一下|Let me/);
+});
+
+test("direct proposal-adoption question requests full grounded detail", () => {
+  const { route } = requireRoute("你會採納顏若芳的提案嗎？");
+
+  assert.equal(route?.intent.type, "proposal_adoption");
+  assert.deepEqual(route?.args, { name: "顏若芳", detail: "full" });
+
+  const response = createLocalFinalAnswerResponse({ route });
+  assert.match(response.instructions, /第一句先明確回答/);
+  assert.match(response.instructions, /會，好的建議我們都會採納/);
+  assert.match(response.instructions, /其他黨議員的每一項提議/);
+});
+
+test("final civic answer uses natural checked wording without a spoken bridge", () => {
+  const { route } = requireRoute("北投區有哪些議員？");
+  const response = createLocalFinalAnswerResponse({ route });
+
+  assert.match(response.instructions, /我幫你看了一下/);
+  assert.match(response.instructions, /我查了一下/);
+  assert.match(response.instructions, /不要另外建立查詢前言/);
+  assert.match(response.instructions, /根據公開資料顯示/);
+  assert.match(response.instructions, /以公開資料看/);
 });
