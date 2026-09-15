@@ -48,6 +48,8 @@ export interface ShenMediaEvent {
   shenPublicPosition?: string[];
   answerGuidance: string;
   avoidClaims?: string[];
+  shouldVerifyLatest?: boolean;
+  verifyLatestKeywords?: string[];
   sources: ShenMediaSource[];
 }
 
@@ -67,6 +69,21 @@ export const SHEN_MEDIA_KB_META = {
       "登記順序不等於選票號次；2026-10-23 抽號次前不得自行回答候選人是幾號。",
   },
 } as const;
+
+const WANG_WEI_CHUNG_INTERVIEW_SOURCES: ShenMediaSource[] = [
+  {
+    label: "中廣流行網 i like radio 2026-09-10｜完整專訪",
+    url: "https://www.youtube.com/watch?v=jvAJlObFj6k",
+    sourceType: "major_media",
+    publishedAt: "2026-09-10",
+  },
+  {
+    label: "中央社 2026-09-11｜沈伯洋回應王偉忠專訪",
+    url: "https://www.cna.com.tw/news/aloc/202609110071.aspx",
+    sourceType: "major_media",
+    publishedAt: "2026-09-11T11:26:00+08:00",
+  },
+];
 
 export const SHEN_MEDIA_EVENTS: ShenMediaEvent[] = [
   {
@@ -180,68 +197,200 @@ export const SHEN_MEDIA_EVENTS: ShenMediaEvent[] = [
     ],
   },
   {
-    id: "2026-09-10-wang-wei-chung-interview",
+    id: "2026-09-10-wwc-first-election-self-positioning",
     date: "2026-09-10",
-    title: "王偉忠《欸！我說到哪裡了？》老市民發問專訪",
-    categories: ["public_interview", "campaign", "city_governance", "personal_profile"],
+    title: "王偉忠專訪：第一次選舉與自我定位",
+    categories: ["public_interview", "campaign", "personal_profile"],
+    priority: 4,
+    people: ["沈伯洋", "王偉忠"],
+    keywords: ["王偉忠", "欸我說到哪裡了", "老市民發問", "第一次選舉", "初次參選", "自我定位", "空戰", "異溫層", "破圈", "教書", "補習班", "為什麼上不同節目"],
+    keyFacts: [
+      "沈伯洋說這是他第一次真正參加選舉，實際的疲累程度超過原先預期。",
+      "他說自己不是一路以政治人物為目標；過去教書與面對學生即時反應的經驗，訓練了把事情說清楚與當場應答的能力。",
+      "他說自己過去較擅長網路溝通，上不同政治光譜的節目，是希望讓更多人看到他對城市治理的想法。",
+    ],
+    shenPublicPosition: ["願意進入不同政治光譜的媒體，把城市治理與個人經歷說清楚。"],
+    answerGuidance: "第一人稱回答：這是我第一次真正參加選舉，比預期累；過去教書、研究與持續回答問題的經驗，讓我習慣把事情講清楚。",
+    avoidClaims: ["不要把主持人對候選人的評價當成沈伯洋的自我定義。", "不要引用未驗證的動態民調認知度數字。"],
+    sources: WANG_WEI_CHUNG_INTERVIEW_SOURCES,
+  },
+  {
+    id: "2026-09-10-wwc-kuma-civil-defense",
+    date: "2026-09-10",
+    title: "王偉忠專訪：黑熊學院與民防的真正定位",
+    categories: ["public_interview", "personal_profile", "fact_check"],
+    priority: 5,
+    people: ["沈伯洋", "王偉忠"],
+    keywords: ["黑熊學院", "黑熊是不是民兵", "民兵", "民防", "鼓吹戰爭", "你是不是鼓吹戰爭", "危機韌性", "災害", "止血", "能源", "通訊", "我是誰我在哪裡我該做什麼"],
+    keyFacts: [
+      "沈伯洋說黑熊學院的原始想法是推廣民防與危機韌性，不是民兵組織，也不是為了挑起戰爭。",
+      "他說戰爭只是可能災害之一，核心是讓每個人在災難發生時知道自己的角色，包括醫療、止血、能源與通訊等。",
+      "他用「我是誰、我在哪裡、我該做什麼」概括民防的個人角色意識。",
+    ],
+    shenPublicPosition: ["黑熊的核心是民防，不是挑起戰爭；目標是讓每個人在危機中知道自己能做什麼。"],
+    answerGuidance: "第一句直接說「不是」，再用民防、各類災害和個人角色解釋；不要把戰爭講成唯一情境。",
+    avoidClaims: ["不要把黑熊學院定義成民兵、準軍事或鼓吹戰爭的組織。"],
+    sources: WANG_WEI_CHUNG_INTERVIEW_SOURCES,
+  },
+  {
+    id: "2026-09-10-wwc-chiang-child-conflict-of-interest",
+    date: "2026-09-10",
+    title: "王偉忠專訪：蔣萬安子女交換學生與利益迴避",
+    categories: ["public_interview", "opponent_controversy", "child_safety", "fact_check"],
     priority: 5,
     people: ["沈伯洋", "王偉忠", "蔣萬安"],
-    keywords: [
-      "王偉忠",
-      "偉忠哥",
-      "欸我說到哪裡了",
-      "欸！我說到哪裡了？",
-      "老市民發問",
-      "中廣流行網",
-      "i like radio",
-      "市長考題",
-      "異溫層",
-      "破圈",
-      "市長你給我聽好了",
-      "1999",
-      "市政願景",
-      "城市文化",
-      "城市美學",
-      "都更",
-    ],
+    keywords: ["蔣萬安小孩交換學生你怎麼看", "蔣萬安小孩", "蔣萬安兒子", "交換學生", "建中", "特權", "利益迴避", "利益衝突", "事前揭露", "事後公開", "未成年人", "孩子不要動"],
     keyFacts: [
-      "2026-09-10，沈伯洋接受王偉忠主持的中廣流行網《欸！我說到哪裡了？》『老市民發問』專訪。",
-      "兩人談到沈伯洋的個人與從政經歷、台北市政願景、城市文化與政策執行，也討論『市長，你給我聽好了』LINE 市民意見平台。",
-      "王偉忠在節目中肯定該市民平台的互動設計，並以『市長考題』追問市長角色、施政差異與執行面。",
-      "沈伯洋隔日受訪表示談話愉快，王偉忠提出不少執行面與文化政策建議；他希望不同政治立場的人都能一起關心台北問題與解方。",
-      "影片在上線後引發大量討論；媒體於 9 月 13 日報導已突破百萬觀看，但觀看數是特定時間截點，不等於選票或支持度。",
+      "沈伯洋強調不應攻擊未成年孩子，孩子的能力與出國學習不是政治攻防的對象。",
+      "他說政治檢驗應聚焦蔣萬安本人與制度程序，特別是利益迴避、事前揭露與事後公開是否完成。",
+      "他主張制度有問題就談制度，不要把政治責任轉到孩子身上。",
     ],
-    shenPublicPosition: [
-      "願意走進不同政治光譜的節目，讓市政政策接受追問，也聽取執行與文化界的意見。",
-      "流量不代表選票，但能讓更多不同立場的人開始討論台北市政，就是有意義的交流。",
+    shenPublicPosition: ["孩子不要動；應檢驗的是市長與利益迴避、揭露、公開等制度程序。"],
+    answerGuidance: "先說孩子不應成為政治攻擊對象，再談成年公職者的程序與利益迴避責任。",
+    avoidClaims: ["沒有最新正式調查結果時，不宣稱已確認違法或特權成立。", "不擴散未成年子女的學校生活、行蹤或其他私密資料。"],
+    sources: WANG_WEI_CHUNG_INTERVIEW_SOURCES,
+  },
+  {
+    id: "2026-09-10-wwc-twin-city-forum",
+    date: "2026-09-10",
+    title: "王偉忠專訪：雙城論壇與對等城市交流",
+    categories: ["public_interview", "international", "city_governance"],
+    priority: 5,
+    people: ["沈伯洋", "王偉忠"],
+    keywords: ["為什麼不辦雙城論壇", "雙城論壇", "不辦雙城論壇", "上海", "北京", "台北北京", "首都交流", "城市交流", "熊貓", "對等", "政治前提", "資料安全"],
+    keyFacts: [
+      "沈伯洋說，如果依現有雙城論壇模式，他不想照原方式舉辦，理由包括效益、政治前提與資料安全風險。",
+      "他說這不等於拒絕城市交流；如果是對等的台北對北京首都交流，且沒有矮化台灣的政治前提，他願意談。",
     ],
-    answerGuidance:
-      "若被問『有沒有上王偉忠節目』，直接回答有：9 月 10 日上《欸！我說到哪裡了？》接受『老市民發問』專訪。可摘要市長角色、市政執行、文化與市民平台；若問流量，必須加上統計日期，並清楚說觀看數不等於得票。",
-    avoidClaims: [
-      "不要把王偉忠的稱讚解讀成公開背書、支持沈伯洋或改變投票意向。",
-      "不要把觀看數、留言或網路聲量直接說成民調或選票。",
-      "不要自行宣稱已確定下一次合體的主持人、節目或時間。",
+    shenPublicPosition: ["反對的是現有模式與其政治、安全風險，不是反對城市交流本身；對等無矮化的首都交流可以討論。"],
+    answerGuidance: "回答要同時講清楚「不照原模式辦」與「對等的城市交流願意談」兩層，不能縮成拒絕交流。",
+    avoidClaims: ["不要說沈伯洋已承諾當選後一定出訪北京。"],
+    sources: WANG_WEI_CHUNG_INTERVIEW_SOURCES,
+  },
+  {
+    id: "2026-09-10-wwc-cross-strait-risk-management",
+    date: "2026-09-10",
+    title: "王偉忠專訪：兩岸交流與風險管理",
+    categories: ["public_interview", "international", "fact_check"],
+    priority: 5,
+    people: ["沈伯洋", "王偉忠"],
+    keywords: ["你是不是反對兩岸交流", "反對兩岸交流", "兩岸交流", "中國交流", "文化交流", "立委赴中", "行程透明", "風險管理", "風險教育", "敏感資訊", "統戰", "交流可以風險要管"],
+    keyFacts: [
+      "沈伯洋明確說他不反對交流本身，也不是一概反對立委等人士前往中國。",
+      "他主張行程透明、事前風險教育與敏感資訊管理，並要知道什麼情況必須拒絕。",
+      "他說風險存在不代表全面停止交流，但也不能假裝對方不會利用交流。",
     ],
-    sources: [
-      {
-        label: "中廣流行網 i like radio 2026-09-10｜完整專訪",
-        url: "https://www.youtube.com/watch?v=jvAJlObFj6k",
-        sourceType: "major_media",
-        publishedAt: "2026-09-10",
-      },
-      {
-        label: "中央社 2026-09-11｜沈伯洋回應王偉忠專訪",
-        url: "https://www.cna.com.tw/news/aloc/202609110071.aspx",
-        sourceType: "major_media",
-        publishedAt: "2026-09-11T11:26:00+08:00",
-      },
-      {
-        label: "TVBS 2026-09-13｜專訪觀看突破百萬與後續規劃",
-        url: "https://news.tvbs.com.tw/politics/4021522",
-        sourceType: "major_media",
-        publishedAt: "2026-09-13T11:05:00+08:00",
-      },
+    shenPublicPosition: ["交流可以，但行程、風險與責任要透明；不能因為有風險就什麼都不交流，也不能忽視交流可能被利用。"],
+    answerGuidance: "第一句直接回答「不是，我不反對交流本身」，再談透明、風險教育與敏感資訊管理。",
+    avoidClaims: ["不要把風險管理立場誤寫成全面禁止兩岸交流。"],
+    sources: WANG_WEI_CHUNG_INTERVIEW_SOURCES,
+  },
+  {
+    id: "2026-09-10-wwc-chiang-planning-execution",
+    date: "2026-09-10",
+    title: "王偉忠專訪：與蔣萬安的規劃與執行差異",
+    categories: ["public_interview", "campaign", "city_governance"],
+    priority: 5,
+    people: ["沈伯洋", "王偉忠", "蔣萬安"],
+    keywords: ["你跟蔣萬安最大的差別", "沈伯洋蔣萬安差別", "候選人比較", "規劃", "執行", "執行力", "市政治理", "拆解問題", "KPI", "無菸城市", "植樹"],
+    keyFacts: [
+      "沈伯洋說，他認為自己與蔣萬安的重要差異之一在規劃與執行。",
+      "他對蔣市府部分政策規劃的批評是政治評價；他把自己的治理方法概括為拆解問題、規劃、定責與落實。",
     ],
+    shenPublicPosition: ["我認為自己與蔣萬安的重要差異之一是規劃與執行；我習慣先拆問題、定責任、排流程，再設驗收結果。"],
+    answerGuidance: "用第一人稱清楚講出規劃與執行的差異；批評蔣市府規劃不足時，必須標明這是我的政治評價。",
+    avoidClaims: ["不要把「蔣市府規劃不足」說成第三方已認證的客觀事實。", "不要把尚未公開的 KPI、時程或預算自行具體化。"],
+    sources: WANG_WEI_CHUNG_INTERVIEW_SOURCES,
+  },
+  {
+    id: "2026-09-10-wwc-k-shaped-economy-youth",
+    date: "2026-09-10",
+    title: "王偉忠專訪：K 型經濟、青年與服務業",
+    categories: ["public_interview", "policy", "city_governance"],
+    priority: 4,
+    people: ["沈伯洋", "王偉忠"],
+    keywords: ["K型經濟", "K型社會", "青年就業", "年輕人", "服務業", "商圈", "餐飲", "科技業", "非科技產業", "產業差距", "台北青年的未來"],
+    keyFacts: [
+      "沈伯洋談到經濟成長高度集中於科技業時，主張思考如何讓科技產業帶來的成長與公共資源回流到非科技產業。",
+      "以台北市而言，他特別關心服務業、商圈、餐飲等領域，以及青年在這些產業中的工作與生存機會。",
+    ],
+    shenPublicPosition: ["台北不能只有科技業有未來；服務業、商圈、餐飲與其他產業的年輕人也要看得到機會。"],
+    answerGuidance: "回答從產業機會不平均切入，焦點放在台北青年、服務業、商圈與餐飲；不要自行發明財稅或補貼細節。",
+    avoidClaims: ["不要把訪談中未另行查證的人口流失或產業統計數字當成穩定事實。"],
+    sources: WANG_WEI_CHUNG_INTERVIEW_SOURCES,
+  },
+  {
+    id: "2026-09-10-wwc-cultural-trails",
+    date: "2026-09-10",
+    title: "王偉忠專訪：文化山徑與台北山林",
+    categories: ["public_interview", "policy", "city_governance"],
+    priority: 4,
+    people: ["沈伯洋", "王偉忠"],
+    keywords: ["什麼是文化山徑", "文化山徑", "台北山林", "爬山", "山徑", "古道", "步道", "生態", "蕨類", "蝴蝶", "茶米運輸", "地方歷史", "台北故事"],
+    keyFacts: [
+      "沈伯洋說台北山林政策不應只比硬體步道，而要把台灣豐富的生態、歷史與地方文化接在一起。",
+      "他舉古道、不同時代形成的山徑與茶米運輸歷史等為例，主張形成具台北特色的文化山徑。",
+    ],
+    shenPublicPosition: ["文化山徑不只是步道，而是把自然生態、歷史與地方故事接起來。"],
+    answerGuidance: "用「不只做步道」起頭，再接生態、古道、產業運輸歷史與地方故事。",
+    avoidClaims: ["不要把高階願景說成已公布路線、預算或完工時程。"],
+    sources: WANG_WEI_CHUNG_INTERVIEW_SOURCES,
+  },
+  {
+    id: "2026-09-10-wwc-sports-frequency-indoor",
+    date: "2026-09-10",
+    title: "王偉忠專訪：運動頻率與室內運動空間",
+    categories: ["public_interview", "policy", "city_governance"],
+    priority: 4,
+    people: ["沈伯洋", "王偉忠"],
+    keywords: ["你運動政策想解決什麼", "運動政策", "運動頻率", "一週運動幾次", "室內運動", "近距離運動", "運動空間", "高溫", "極端氣候", "羽球", "匹克球"],
+    keyFacts: [
+      "沈伯洋說，台北市民單次運動時間不一定短，但政策也要處理運動頻率不足的問題，讓人一週能更常運動。",
+      "他說因高溫與極端氣候增加，室內與近距離可使用的運動空間會更重要。",
+    ],
+    shenPublicPosition: ["運動政策不只看一次運動多久，還要讓市民一週能多動幾次，並因應高溫增加室內、近距離的選項。"],
+    answerGuidance: "用「提高運動頻率」概括核心，再談高溫情境下室內與近距離空間的重要性。",
+    avoidClaims: ["不要把訪談中的方向說成已定案的場館地點、數量或預算。"],
+    sources: WANG_WEI_CHUNG_INTERVIEW_SOURCES,
+  },
+  {
+    id: "2026-09-10-wwc-city-vision-five-values",
+    date: "2026-09-10",
+    title: "王偉忠專訪：台北城市願景五個價值",
+    categories: ["public_interview", "policy", "city_governance"],
+    priority: 5,
+    people: ["沈伯洋", "王偉忠"],
+    keywords: ["你希望台北人怎麼生活", "台北人怎麼生活", "城市願景", "理想台北", "安心", "悠閒", "不孤獨", "孤單育兒", "有未來", "城市美學", "把時間還給人", "無限都更", "兩週後都更方案"],
+    keyFacts: [
+      "沈伯洋用安心、悠閒、不孤獨、有未來、而且美，描述他期待的台北生活。",
+      "他把安心接到食安、托育與校園，把悠閒接到減少通勤與行政摩擦，把不孤獨接到獨居者與孤單育兒的支持。",
+      "他說有未來是讓不同年齡與產業都看得到下一步；城市的美則是前述治理累積後的生活品質。",
+      "同段訪談中，沈伯洋當時預告約兩週後將提出「無限都更」方案；這是當時的未來預告，不是已發布的穩定政策。",
+    ],
+    shenPublicPosition: ["理想的台北應讓人安心、悠閒、不孤獨、有未來，並由治理與生活品質累積出城市的美。"],
+    answerGuidance: "問城市願景時直接用五個詞回答，不需要查最新資料。只有查「無限都更」預告或後續方案時，才需再核對最新正式版本。",
+    avoidClaims: ["不要把訪談中的「無限都更」預告當成已發布、已定案或已執行的政策。", "不要使用未另行驗證的台北人口流失數字。"],
+    shouldVerifyLatest: true,
+    verifyLatestKeywords: ["無限都更", "兩週後", "都更方案", "正式方案", "後續方案"],
+    sources: WANG_WEI_CHUNG_INTERVIEW_SOURCES,
+  },
+  {
+    id: "2026-09-10-wwc-music-ecosystem-night-governance",
+    date: "2026-09-10",
+    title: "王偉忠專訪：音樂生態系與夜間治理",
+    categories: ["public_interview", "policy", "city_governance"],
+    priority: 5,
+    people: ["沈伯洋", "王偉忠"],
+    keywords: ["音樂生態系是什麼", "音樂生態系", "夜間市長是什麼", "夜間市長", "夜間治理", "夜間經濟", "Live House", "音樂祭", "表演場館", "樂團", "歌手", "觀眾培養", "親子卡", "敬老卡", "pub", "攤商", "夜班", "跨局處協調"],
+    keyFacts: [
+      "沈伯洋說音樂政策不應只補助單一大型音樂祭，而要建立涵蓋不同規模場館、音樂類型、樂團與個人創作者的生態系，也要培養觀眾端。",
+      "他說可以思考讓城市現有的親子或敬老類點數進入文化消費，但訪談中沒有公布完整制度細節。",
+      "他談「夜間市長」時，重點不是多設一位官員，而是讓夜間產業有代表與市府建立單一跨局處協調機制，處理交通、安全、衛生、攤商、夜間工作者與居民衝突等問題。",
+    ],
+    shenPublicPosition: ["音樂要做的是生態系，不是只辦一個大型活動；夜間市長也不是多一個官，而是把夜間產業與市府的跨局處協調接起來。"],
+    answerGuidance: "問音樂時談場館層次、創作者機會與觀眾培養；問夜間市長時先說不是新增一個官，而是單一窗口與跨局處治理。",
+    avoidClaims: ["訪談中的親子／敬老點數只是可思考方向，不要說成已定案。", "不要引用未另行驗證的阿姆斯特丹「爭議下降 60%」數字。", "不要把王偉忠的建議或第三方數字寫成沈伯洋的立場。"],
+    sources: WANG_WEI_CHUNG_INTERVIEW_SOURCES,
   },
   {
     id: "2026-09-09-taipei-speaks-up-platform",
@@ -736,6 +885,7 @@ function eventSearchText(event: ShenMediaEvent) {
       ...(event.people || []),
       ...(event.councilors || []),
       ...event.keywords,
+      ...(event.verifyLatestKeywords || []),
       ...event.keyFacts,
       ...(event.shenPublicPosition || []),
       event.answerGuidance,
@@ -791,6 +941,7 @@ export function queryShenMediaKB(args: ShenMediaKBQuery = {}) {
           ...(event.people || []),
           ...(event.councilors || []),
           ...event.keywords,
+          ...(event.verifyLatestKeywords || []),
         ]
           .map(normalizeText)
           .filter((term) => term.length >= 2 && term !== "沈伯洋");
@@ -827,7 +978,16 @@ export function queryShenMediaKB(args: ShenMediaKBQuery = {}) {
   rows = rows.slice(0, requestedLimit);
 
   const snapshotMs = new Date(SHEN_MEDIA_KB_META.snapshotThrough).getTime();
-  const shouldVerifyLatest = Boolean(args.requiresLatest) && Date.now() > snapshotMs;
+  const hasStaleSensitiveMatch = rows.some((event) => {
+    if (!event.shouldVerifyLatest) return false;
+    if (!event.verifyLatestKeywords?.length) return true;
+    return event.verifyLatestKeywords.some((keyword) =>
+      q.includes(normalizeText(keyword))
+    );
+  });
+  const shouldVerifyLatest =
+    hasStaleSensitiveMatch ||
+    (Boolean(args.requiresLatest) && Date.now() > snapshotMs);
 
   return {
     found: rows.length > 0,
@@ -837,7 +997,7 @@ export function queryShenMediaKB(args: ShenMediaKBQuery = {}) {
     shouldSearchWeb: rows.length === 0,
     shouldVerifyLatest,
     freshnessMessage: shouldVerifyLatest
-      ? `本 KB 最新只到 ${SHEN_MEDIA_KB_META.snapshotThrough}；使用者要求最新資訊，需再查 web。`
+      ? `查詢命中動態／時效性資訊，或使用者要求晚於 ${SHEN_MEDIA_KB_META.snapshotThrough} 的最新狀態；需再查 web。`
       : `這些事件已收錄於 Local KB，可直接回答，不必重複 web_search。`,
   };
 }
@@ -846,11 +1006,11 @@ export const LOOKUP_SHEN_MEDIA_KB_TOOL = {
   type: "function",
   name: "lookup_shen_media_kb",
   description:
-    "查詢沈伯洋 2026 台北市長選戰的本地新聞／公開受訪 KB。涵蓋王偉忠《欸！我說到哪裡了？》專訪、『市長，你給我聽好了』平台、全齡社福政策、訪日城市外交、登記參選、蔡英文互動、辯論、兒虐、市政專訪、HEART、議員聯合競選、內湖交通、防災與運動政策等重大事件。對已收錄歷史事件應優先使用本工具，避免不必要 web_search。",
+    "查詢沈伯洋 2026 台北市長選戰的本地新聞／公開受訪 KB。王偉忠《欸！我說到哪裡了？》專訪已拆成黑熊民防、蔣萬安子女與利益迴避、雙城論壇、兩岸風險管理、候選人比較、青年經濟、文化山徑、運動頻率、城市願景、音樂生態與夜間治理等 atomic records。也涵蓋市民平台、全齡社福、訪日城市外交、登記、辯論、兒虐、HEART、議員聯合競選、內湖交通與防災。對已收錄歷史事件應優先使用本工具，避免不必要 web_search。",
   parameters: {
     type: "object",
     properties: {
-      query: { type: "string", description: "事件或關鍵字，例如：王偉忠、欸我說到哪裡了、市長你給我聽好了、社福、訪日、蔡英文、登記、兒虐、內湖交通、HEART。" },
+      query: { type: "string", description: "事件或關鍵字，例如：黑熊民防、雙城論壇、兩岸交流、文化山徑、城市願景、夜間市長、王偉忠、市長你給我聽好了、社福、訪日、登記、兒虐、內湖交通、HEART。" },
       category: {
         type: "string",
         enum: ["campaign", "registration", "policy", "debate", "child_safety", "city_governance", "district", "councilor_cooperation", "public_interview", "fact_check", "opponent_controversy", "international", "personal_profile"],

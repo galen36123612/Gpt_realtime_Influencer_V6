@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -39,17 +40,115 @@ test("answers the Wang Wei-chung interview from the refreshed Local KB", () => {
   });
 
   assert.equal(interview.found, true);
-  assert.equal(
-    interview.data[0]?.id,
-    "2026-09-10-wang-wei-chung-interview"
-  );
-  assert.match(interview.data[0]?.keyFacts.join(" "), /老市民發問/);
-  assert.match(interview.data[0]?.answerGuidance || "", /觀看數不等於得票/);
+  assert.equal(interview.data[0]?.id, "2026-09-10-wwc-first-election-self-positioning");
+  assert.match(interview.data[0]?.title || "", /王偉忠專訪/);
   assert.ok(
     interview.data[0]?.sources.some(
       ({ url }) => url === "https://www.youtube.com/watch?v=jvAJlObFj6k"
     )
   );
+});
+
+const WANG_WEI_CHUNG_ATOMIC_IDS = [
+  "2026-09-10-wwc-first-election-self-positioning",
+  "2026-09-10-wwc-kuma-civil-defense",
+  "2026-09-10-wwc-chiang-child-conflict-of-interest",
+  "2026-09-10-wwc-twin-city-forum",
+  "2026-09-10-wwc-cross-strait-risk-management",
+  "2026-09-10-wwc-chiang-planning-execution",
+  "2026-09-10-wwc-k-shaped-economy-youth",
+  "2026-09-10-wwc-cultural-trails",
+  "2026-09-10-wwc-sports-frequency-indoor",
+  "2026-09-10-wwc-city-vision-five-values",
+  "2026-09-10-wwc-music-ecosystem-night-governance",
+] as const;
+
+test("stores the Wang Wei-chung interview as 11 atomic, source-dated records", () => {
+  const records = SHEN_MEDIA_EVENTS.filter(({ id }) =>
+    id.startsWith("2026-09-10-wwc-")
+  );
+
+  assert.equal(records.length, 11);
+  assert.deepEqual(records.map(({ id }) => id), WANG_WEI_CHUNG_ATOMIC_IDS);
+  assert.equal(
+    SHEN_MEDIA_EVENTS.some(({ id }) => id === "2026-09-10-wang-wei-chung-interview"),
+    false
+  );
+  assert.ok(records.every(({ date }) => date === "2026-09-10"));
+  assert.ok(
+    records.every(({ sources }) =>
+      sources.some(
+        ({ url, publishedAt }) =>
+          url === "https://www.youtube.com/watch?v=jvAJlObFj6k" &&
+          publishedAt === "2026-09-10"
+      )
+    )
+  );
+});
+
+test("maps all 11 requested interview phrasings to their atomic Local KB records", () => {
+  const cases = [
+    ["黑熊是不是民兵？", "2026-09-10-wwc-kuma-civil-defense"],
+    ["你是不是鼓吹戰爭？", "2026-09-10-wwc-kuma-civil-defense"],
+    ["蔣萬安小孩交換學生你怎麼看？", "2026-09-10-wwc-chiang-child-conflict-of-interest"],
+    ["你為什麼不辦雙城論壇？", "2026-09-10-wwc-twin-city-forum"],
+    ["你是不是反對兩岸交流？", "2026-09-10-wwc-cross-strait-risk-management"],
+    ["你跟蔣萬安最大的差別？", "2026-09-10-wwc-chiang-planning-execution"],
+    ["你希望台北人怎麼生活？", "2026-09-10-wwc-city-vision-five-values"],
+    ["什麼是文化山徑？", "2026-09-10-wwc-cultural-trails"],
+    ["你運動政策想解決什麼？", "2026-09-10-wwc-sports-frequency-indoor"],
+    ["音樂生態系是什麼？", "2026-09-10-wwc-music-ecosystem-night-governance"],
+    ["夜間市長是什麼？", "2026-09-10-wwc-music-ecosystem-night-governance"],
+  ] as const;
+
+  for (const [query, expectedId] of cases) {
+    const result = queryShenMediaKB({ query, limit: 1 });
+    assert.equal(result.data[0]?.id, expectedId, query);
+    assert.equal(selectShenMediaKBTool(query), "lookup_shen_media_kb", query);
+  }
+});
+
+test("keeps host context out of Shen positions and guards unverified figures", () => {
+  const records = SHEN_MEDIA_EVENTS.filter(({ id }) =>
+    id.startsWith("2026-09-10-wwc-")
+  );
+  const attributedShenClaims = records
+    .flatMap(({ keyFacts, shenPublicPosition = [] }) => [
+      ...keyFacts,
+      ...shenPublicPosition,
+    ])
+    .join(" ");
+
+  assert.doesNotMatch(attributedShenClaims, /王偉忠(?:說|認為|主張)/);
+  assert.doesNotMatch(attributedShenClaims, /三成|五成|27／28 萬|下降 60%/);
+});
+
+test("treats the unlimited-renewal preview as stale-sensitive, not stable policy", () => {
+  const cityVision = queryShenMediaKB({ query: "你希望台北人怎麼生活？", limit: 1 });
+  assert.equal(cityVision.shouldVerifyLatest, false);
+
+  const renewal = queryShenMediaKB({ query: "無限都更現在是什麼方案？", limit: 1 });
+  assert.equal(renewal.data[0]?.id, "2026-09-10-wwc-city-vision-five-values");
+  assert.equal(renewal.data[0]?.shouldVerifyLatest, true);
+  assert.equal(renewal.shouldVerifyLatest, true);
+});
+
+test("syncs the active simpleExample System Prompt to V20 without dynamic claims", () => {
+  const source = readFileSync(
+    new URL("../src/app/agentConfigs/simpleExample.ts", import.meta.url),
+    "utf8"
+  );
+  const activePrompt = source.match(
+    /const greeter:[\s\S]*?instructions:\s*`([\s\S]*?)`,\n\s*tools:/
+  )?.[1];
+
+  assert.ok(activePrompt);
+  assert.match(activePrompt, /System Prompt V20/);
+  assert.match(activePrompt, /黑熊學院與民防怎麼解釋/);
+  assert.match(activePrompt, /安心、悠閒、不孤獨、有未來、而且美/);
+  assert.match(activePrompt, /文化山徑/);
+  assert.match(activePrompt, /夜間市長不是多一個官/);
+  assert.doesNotMatch(activePrompt, /無限都更|27／28 萬|下降 60%|民調認知度/);
 });
 
 test("includes the citizen platform, social-welfare package and Japan visit", () => {
