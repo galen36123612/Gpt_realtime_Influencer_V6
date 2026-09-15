@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   LOOKUP_SHEN_MEDIA_KB_TOOL,
   SHEN_MEDIA_EVENTS,
+  SHEN_MEDIA_KB_META,
   executeShenMediaKBTool,
   queryShenMediaKB,
 } from "../src/app/data/shenMediaKB.ts";
@@ -14,7 +15,12 @@ import {
 } from "../src/app/lib/shenMediaRouting.ts";
 
 test("ships a unique, source-backed Shen media snapshot", () => {
-  assert.ok(SHEN_MEDIA_EVENTS.length >= 15);
+  assert.ok(SHEN_MEDIA_EVENTS.length >= 22);
+  assert.equal(SHEN_MEDIA_KB_META.verifiedAt, "2026-09-15");
+  assert.equal(
+    SHEN_MEDIA_KB_META.snapshotThrough,
+    "2026-09-15T09:15:00+08:00"
+  );
   assert.equal(
     new Set(SHEN_MEDIA_EVENTS.map(({ id }) => id)).size,
     SHEN_MEDIA_EVENTS.length
@@ -24,6 +30,43 @@ test("ships a unique, source-backed Shen media snapshot", () => {
       ({ sources }) => sources.length > 0 && sources.every(({ url }) => /^https:\/\//.test(url))
     )
   );
+});
+
+test("answers the Wang Wei-chung interview from the refreshed Local KB", () => {
+  const interview = queryShenMediaKB({
+    query: "你上王偉忠的欸我說到哪裡了談了什麼？",
+    limit: 3,
+  });
+
+  assert.equal(interview.found, true);
+  assert.equal(
+    interview.data[0]?.id,
+    "2026-09-10-wang-wei-chung-interview"
+  );
+  assert.match(interview.data[0]?.keyFacts.join(" "), /老市民發問/);
+  assert.match(interview.data[0]?.answerGuidance || "", /觀看數不等於得票/);
+  assert.ok(
+    interview.data[0]?.sources.some(
+      ({ url }) => url === "https://www.youtube.com/watch?v=jvAJlObFj6k"
+    )
+  );
+});
+
+test("includes the citizen platform, social-welfare package and Japan visit", () => {
+  const platform = queryShenMediaKB({ query: "市長你給我聽好了 LINE平台" });
+  assert.equal(platform.data[0]?.id, "2026-09-09-taipei-speaks-up-platform");
+  assert.match(platform.data[0]?.keyFacts.join(" "), /近 4000 則/);
+
+  const welfare = queryShenMediaKB({ query: "社福政策 臨時托老券 腸病毒疫苗" });
+  assert.equal(
+    welfare.data[0]?.id,
+    "2026-09-11-full-life-cycle-social-welfare"
+  );
+  assert.match(welfare.data[0]?.keyFacts.join(" "), /女性安全審計/);
+
+  const japan = queryShenMediaKB({ query: "訪日 日本後援會 旅日青年" });
+  assert.equal(japan.data[0]?.id, "2026-09-11-14-japan-city-diplomacy");
+  assert.match(japan.data[0]?.keyFacts.join(" "), /AI 城市治理/);
 });
 
 test("registers and dispatches lookup_shen_media_kb", () => {
@@ -85,6 +128,14 @@ test("forces known campaign and interview topics to Local KB", () => {
   assert.equal(
     selectShenMediaKBTool("哪些市議員跟沈伯洋合作？"),
     null
+  );
+  assert.equal(
+    selectShenMediaKBTool("你上王偉忠的節目談了什麼？"),
+    "lookup_shen_media_kb"
+  );
+  assert.equal(
+    selectShenMediaKBTool("市長你給我聽好了是什麼？"),
+    "lookup_shen_media_kb"
   );
 });
 

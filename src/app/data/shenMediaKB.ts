@@ -1,5 +1,5 @@
 // 沈伯洋 2026 台北市長選戰｜新聞／公開受訪 Local KB
-// Snapshot through: 2026-09-07 13:46 Asia/Taipei
+// Snapshot through: 2026-09-15 09:15 Asia/Taipei
 //
 // 用途：
 // - 優先回答「已發生」的重大新聞、公開受訪、競選事件、政策發布。
@@ -52,9 +52,9 @@ export interface ShenMediaEvent {
 }
 
 export const SHEN_MEDIA_KB_META = {
-  snapshotThrough: "2026-09-07T13:46:00+08:00",
+  snapshotThrough: "2026-09-15T09:15:00+08:00",
   timezone: "Asia/Taipei",
-  verifiedAt: "2026-09-07",
+  verifiedAt: "2026-09-15",
   scope:
     "2026 台北市長選戰重大新聞、公開受訪、政策發布、登記、重要市議員公開合作與主要攻防事件。",
   freshnessRule:
@@ -69,6 +69,234 @@ export const SHEN_MEDIA_KB_META = {
 } as const;
 
 export const SHEN_MEDIA_EVENTS: ShenMediaEvent[] = [
+  {
+    id: "2026-09-11-14-japan-city-diplomacy",
+    date: "2026-09-14",
+    title: "訪日：成立日本後援會、旅日青年座談與城市外交交流",
+    categories: ["international", "campaign", "city_governance", "public_interview"],
+    priority: 4,
+    people: ["沈伯洋"],
+    keywords: [
+      "訪日",
+      "日本",
+      "東京",
+      "日本後援會",
+      "旅日青年",
+      "青年座談",
+      "城市外交",
+      "國會外交",
+      "人才交流",
+      "都市更新",
+      "AI城市治理",
+      "城市韌性",
+      "海底電纜",
+      "民間防衛",
+    ],
+    keyFacts: [
+      "沈伯洋於 2026-09-11 啟程訪日，公開說明三項目標：國會外交、城市外交與成立日本後援會。",
+      "9 月 12 日在東京舉行日本後援會成立活動，接觸旅日台灣人對台北市政與台灣未來的意見。",
+      "9 月 13 日在東京惠比壽與約百名旅日台灣青年座談，討論人才回流與台日人才交流，也談都市更新、AI 城市治理、城市韌性、居住與就業。",
+      "行程也包含與日本自民黨國會議員交流；9 月 14 日公開總結議題涵蓋產業、人才、都市更新、安全韌性、醫療與內容產業。",
+    ],
+    shenPublicPosition: [
+      "海外後援網絡不只用於選舉，也可成為台北與國際產業、人才及城市治理交流的長期節點。",
+      "台北的都市更新、AI 治理與安全韌性，可以吸收東京及旅日台灣青年的實務經驗。",
+    ],
+    answerGuidance:
+      "若被問最近訪日做什麼，可直接說：我這次把國會外交、城市外交和日本後援網絡一起推進，也和旅日青年談人才、都更、AI 城市治理、居住與韌性；已公開的是交流方向，不要把尚未公布的拜會內容說成簽署合作。",
+    avoidClaims: [
+      "不要把交流或座談說成已簽署城市合作協議。",
+      "未經雙方公開同意，不要自行補出未公布的日本官員姓名或閉門會談內容。",
+    ],
+    sources: [
+      {
+        label: "中央社 2026-09-11｜訪日三目標",
+        url: "https://www.cna.com.tw/news/aloc/202609110254.aspx",
+        sourceType: "major_media",
+        publishedAt: "2026-09-11T17:57:00+08:00",
+      },
+      {
+        label: "自由時報 2026-09-14｜訪日總結與旅日青年座談",
+        url: "https://video.ltn.com.tw/article/NIPnDBZ3bFI/PLI7xntdRxhw1rpX3OIi9nX4jeQoPimc9q",
+        sourceType: "major_media",
+        publishedAt: "2026-09-14T15:01:00+08:00",
+      },
+    ],
+  },
+  {
+    id: "2026-09-11-full-life-cycle-social-welfare",
+    date: "2026-09-11",
+    title: "全生命週期社福政策：長照、心理健康、兒少、身障與女性安全",
+    categories: ["policy", "child_safety", "city_governance", "public_interview"],
+    priority: 5,
+    people: ["沈伯洋"],
+    keywords: [
+      "社福政策",
+      "社會福利",
+      "全生命週期",
+      "臨時托老券",
+      "敬老卡",
+      "在宅醫療",
+      "鐘點移工",
+      "皮蛇疫苗",
+      "心理諮商",
+      "腸病毒疫苗",
+      "親子同行卡",
+      "兒少安全治理中心",
+      "無障礙設計中心",
+      "女性安全審計",
+      "單身不孤獨服務專線",
+    ],
+    keyFacts: [
+      "2026-09-11，沈伯洋舉辦台北社會福利政策座談會，提出從幼童、中壯年到長者、身障者與女性的全生命週期社福方案。",
+      "長者政策包含敬老卡升級、臨時托老券、在宅醫療，以及透過都更與退場學校空間補足長照設施。",
+      "中壯年方案包含 50 歲以上皮蛇疫苗一劑補助、15 至 65 歲免費心理諮商，並強化職場支持。",
+      "兒少方案包含 0 至 6 歲幼兒免費腸病毒疫苗、親子同行卡，以及跨教育、社政、警政資料的兒少安全治理中心。",
+      "另提出無障礙設計與爬梯機補助、女性安全審計，以及整合心理、社福與醫療的單身女性服務專線。",
+    ],
+    shenPublicPosition: [
+      "社福不能是碎片化補助，而要以人的生命歷程整合醫療、住宅、就業、心理與照顧支持。",
+      "市府應由被動分工轉為主動支持網，並用跨局處資料降低可預防的兒少風險。",
+    ],
+    answerGuidance:
+      "回答最近社福政見時，先用『全生命週期』概括，再依使用者關心的族群挑 2 到 4 項具體措施；這些是政見與推動藍圖，不要說成已由北市府實施。",
+    avoidClaims: [
+      "不要把競選政見說成已編列完成或已經上路。",
+      "不要把風險治理說成能保證所有兒虐事件不再發生。",
+    ],
+    sources: [
+      {
+        label: "沈伯洋競選官網｜社福政策",
+        url: "https://puma.taipei/policies/%E7%A4%BE%E7%A6%8F%E6%94%BF%E7%AD%96",
+        sourceType: "official_campaign",
+        publishedAt: "2026-09-11",
+      },
+      {
+        label: "Newtalk 2026-09-11｜台北社會福利政策座談會",
+        url: "https://newtalk.tw/news/view/2026-09-11/1059220",
+        sourceType: "major_media",
+        publishedAt: "2026-09-11T16:17:00+08:00",
+      },
+    ],
+  },
+  {
+    id: "2026-09-10-wang-wei-chung-interview",
+    date: "2026-09-10",
+    title: "王偉忠《欸！我說到哪裡了？》老市民發問專訪",
+    categories: ["public_interview", "campaign", "city_governance", "personal_profile"],
+    priority: 5,
+    people: ["沈伯洋", "王偉忠", "蔣萬安"],
+    keywords: [
+      "王偉忠",
+      "偉忠哥",
+      "欸我說到哪裡了",
+      "欸！我說到哪裡了？",
+      "老市民發問",
+      "中廣流行網",
+      "i like radio",
+      "市長考題",
+      "異溫層",
+      "破圈",
+      "市長你給我聽好了",
+      "1999",
+      "市政願景",
+      "城市文化",
+      "城市美學",
+      "都更",
+    ],
+    keyFacts: [
+      "2026-09-10，沈伯洋接受王偉忠主持的中廣流行網《欸！我說到哪裡了？》『老市民發問』專訪。",
+      "兩人談到沈伯洋的個人與從政經歷、台北市政願景、城市文化與政策執行，也討論『市長，你給我聽好了』LINE 市民意見平台。",
+      "王偉忠在節目中肯定該市民平台的互動設計，並以『市長考題』追問市長角色、施政差異與執行面。",
+      "沈伯洋隔日受訪表示談話愉快，王偉忠提出不少執行面與文化政策建議；他希望不同政治立場的人都能一起關心台北問題與解方。",
+      "影片在上線後引發大量討論；媒體於 9 月 13 日報導已突破百萬觀看，但觀看數是特定時間截點，不等於選票或支持度。",
+    ],
+    shenPublicPosition: [
+      "願意走進不同政治光譜的節目，讓市政政策接受追問，也聽取執行與文化界的意見。",
+      "流量不代表選票，但能讓更多不同立場的人開始討論台北市政，就是有意義的交流。",
+    ],
+    answerGuidance:
+      "若被問『有沒有上王偉忠節目』，直接回答有：9 月 10 日上《欸！我說到哪裡了？》接受『老市民發問』專訪。可摘要市長角色、市政執行、文化與市民平台；若問流量，必須加上統計日期，並清楚說觀看數不等於得票。",
+    avoidClaims: [
+      "不要把王偉忠的稱讚解讀成公開背書、支持沈伯洋或改變投票意向。",
+      "不要把觀看數、留言或網路聲量直接說成民調或選票。",
+      "不要自行宣稱已確定下一次合體的主持人、節目或時間。",
+    ],
+    sources: [
+      {
+        label: "中廣流行網 i like radio 2026-09-10｜完整專訪",
+        url: "https://www.youtube.com/watch?v=jvAJlObFj6k",
+        sourceType: "major_media",
+        publishedAt: "2026-09-10",
+      },
+      {
+        label: "中央社 2026-09-11｜沈伯洋回應王偉忠專訪",
+        url: "https://www.cna.com.tw/news/aloc/202609110071.aspx",
+        sourceType: "major_media",
+        publishedAt: "2026-09-11T11:26:00+08:00",
+      },
+      {
+        label: "TVBS 2026-09-13｜專訪觀看突破百萬與後續規劃",
+        url: "https://news.tvbs.com.tw/politics/4021522",
+        sourceType: "major_media",
+        publishedAt: "2026-09-13T11:05:00+08:00",
+      },
+    ],
+  },
+  {
+    id: "2026-09-09-taipei-speaks-up-platform",
+    date: "2026-09-09",
+    title: "『市長，你給我聽好了』LINE 市民心聲蒐集平台上線",
+    categories: ["campaign", "city_governance", "policy", "public_interview"],
+    priority: 5,
+    people: ["沈伯洋"],
+    keywords: [
+      "市長你給我聽好了",
+      "你給我聽好",
+      "市民心聲",
+      "LINE平台",
+      "LINE市民意見",
+      "市民意見蒐集",
+      "市民變主角",
+      "可愛動物",
+      "排隊發言",
+      "12行政區",
+      "1999",
+      "實體活動",
+      "大數據分析",
+    ],
+    keyFacts: [
+      "平台於 2026-09-08 晚間上線，9 月 9 日舉行『市長，你給我聽好了』市民心聲蒐集平台記者會。",
+      "市民可透過 LINE 提出對台北市政的建議或感受，化身代表不同生活處境的可愛動物，在 12 個行政區特色背景中排隊發言。",
+      "平台設計包含 12 區生活場景、排隊期間互動，以及議題分類；團隊規劃整理不同議題與地區意見，作為政策研擬材料。",
+      "截至 9 月 9 日記者會時，平台註冊人數破萬並收到近 4000 則市政意見；9 月 11 日公開說法則為約 2 萬餘則留言。",
+      "沈伯洋表示 10 月將規劃實體活動，讓市民面對面討論市政並回應蒐集到的問題。",
+    ],
+    shenPublicPosition: [
+      "城市的主人是居民，選舉不應只有參選人講、市民聽，而要把麥克風交給市民。",
+      "線上蒐集的意見要依議題與行政區整理，後續回應並轉化為城市痛點的政策解方。",
+    ],
+    answerGuidance:
+      "被問這個平台是什麼時，先說它是 LINE 市民意見蒐集與互動平台，再說留言會按議題、行政區整理並銜接實體討論；人數與留言數一定要標示統計日期，不要當成現在即時數字。",
+    avoidClaims: [
+      "不要說所有留言都會直接變成政策或一定逐則由沈伯洋本人回覆。",
+      "不要把註冊、留言數說成支持者數、民調或選票。",
+    ],
+    sources: [
+      {
+        label: "『市長，你給我聽好了』官方平台",
+        url: "https://taipeispeaksup.org/",
+        sourceType: "official_campaign",
+        publishedAt: "2026-09-08",
+      },
+      {
+        label: "中央社 2026-09-09｜市民心聲蒐集平台上線",
+        url: "https://www.cna.com.tw/news/aipl/202609090125.aspx",
+        sourceType: "major_media",
+        publishedAt: "2026-09-09T13:02:00+08:00",
+      },
+    ],
+  },
   {
     id: "2026-09-07-child-abuse-direct-talk-with-chiang",
     date: "2026-09-07",
@@ -618,11 +846,11 @@ export const LOOKUP_SHEN_MEDIA_KB_TOOL = {
   type: "function",
   name: "lookup_shen_media_kb",
   description:
-    "查詢沈伯洋 2026 台北市長選戰的本地新聞／公開受訪 KB。涵蓋登記參選、蔡英文互動、辯論、蔣萬安兒子交換學生爭議、兒虐、市政專訪、HEART、議員聯合競選、松山信義、內湖交通、防災與運動政策等重大事件。對已收錄歷史事件應優先使用本工具，避免不必要 web_search。",
+    "查詢沈伯洋 2026 台北市長選戰的本地新聞／公開受訪 KB。涵蓋王偉忠《欸！我說到哪裡了？》專訪、『市長，你給我聽好了』平台、全齡社福政策、訪日城市外交、登記參選、蔡英文互動、辯論、兒虐、市政專訪、HEART、議員聯合競選、內湖交通、防災與運動政策等重大事件。對已收錄歷史事件應優先使用本工具，避免不必要 web_search。",
   parameters: {
     type: "object",
     properties: {
-      query: { type: "string", description: "事件或關鍵字，例如：蔡英文、登記、交換學生、獎學金、利益迴避、辯論、兒虐、內湖交通、HEART、2500億。" },
+      query: { type: "string", description: "事件或關鍵字，例如：王偉忠、欸我說到哪裡了、市長你給我聽好了、社福、訪日、蔡英文、登記、兒虐、內湖交通、HEART。" },
       category: {
         type: "string",
         enum: ["campaign", "registration", "policy", "debate", "child_safety", "city_governance", "district", "councilor_cooperation", "public_interview", "fact_check", "opponent_controversy", "international", "personal_profile"],
@@ -653,6 +881,10 @@ export const SHEN_MEDIA_KB_TOOL_INSTRUCTIONS = `
 - 沈伯洋對利益迴避、兒童保護的公開回答
 - 市長辯論與交互詰問主張
 - 2026-09-07 兒虐制度問題與蔣萬安同場互動
+- 2026-09-09「市長，你給我聽好了」市民心聲平台
+- 2026-09-10 王偉忠《欸！我說到哪裡了？》專訪
+- 2026-09-11 全生命週期社福政策
+- 2026-09-11 至 09-14 訪日、旅日青年座談與城市外交
 - 2500 億預算、今周刊專訪
 - 歷任市長請益
 - HEART
