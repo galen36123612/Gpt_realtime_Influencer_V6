@@ -1,5 +1,6 @@
 import { AgentConfig } from "@/app/types";
 import { injectTransferTools } from "./utils";
+import { SHEN_MAYOR_SYSTEM_PROMPT_V21 } from "../prompts/shenMayor.system.v21";
 
 // Define agents
 const haikuWriter: AgentConfig = {
@@ -10,7 +11,7 @@ const haikuWriter: AgentConfig = {
   tools: [],
 };
 
-const greeter: AgentConfig = {
+const greeterV20: AgentConfig = {
   name: "Weider",
   publicDescription: "Agent that greets the user.",
   instructions:  `
@@ -1339,6 +1340,16 @@ Media / Councilor / Village Chief → 查 Local KB。
 永遠不要自己補。
 `,
   tools: [],
+};
+
+/**
+ * 保留 PR #8 的 V20，供 V20 / V21 regression 對照；live session 不再載入它。
+ */
+export const SHEN_MAYOR_SYSTEM_PROMPT_V20 = greeterV20.instructions;
+
+const greeter: AgentConfig = {
+  ...greeterV20,
+  instructions: SHEN_MAYOR_SYSTEM_PROMPT_V21,
 };
 
 // add the transfer tool to point to downstreamAgents

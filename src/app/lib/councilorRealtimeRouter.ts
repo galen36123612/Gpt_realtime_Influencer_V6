@@ -42,7 +42,7 @@ export type CouncilorIntent =
   | { type: "list_by_party"; district?: string; party: string }
   | { type: "topic_search"; topic: CouncilorPolicyTopic; party?: string }
   | { type: "profile"; name: string; names: string[] }
-  | { type: "policy"; name: string; names: string[] }
+  | { type: "policy"; name: string; names: string[]; specific: boolean }
   | { type: "proposal_adoption"; name: string; names: string[] }
   | { type: "relationship"; name: string; names: string[] }
   | { type: "events"; name: string; names: string[] }
@@ -200,11 +200,23 @@ function referencedNames(
     return context.activeCouncilorNames?.slice(-1) || [];
   }
 
+  if (/(?:跟|和|與)(?:他|她|這位|那位)/.test(value)) {
+    return context.activeCouncilorNames?.slice(-1) || [];
+  }
+
   return [];
 }
 
 function hasPolicyIntent(text: string) {
-  return /政見|訴求|政策|關心什麼|關注什麼|主張什麼|方向一樣/.test(compact(text));
+  return /政見|訴求|政策|關心什麼|關注什麼|主張什麼|方向一樣|具體提過|做過什麼|哪一案|提案|質詢|市府怎麼回|有沒有落實|目前進度/.test(
+    compact(text)
+  );
+}
+
+function requiresSpecificPolicyRecords(text: string) {
+  return /具體|提過|做過|哪一案|提案|質詢|預算|市府怎麼回|回應|落實|進度|什麼時候|日期/.test(
+    compact(text)
+  );
 }
 
 function hasProposalAdoptionIntent(text: string) {
@@ -257,7 +269,11 @@ function cacheSupportsIntent(
   return intent.names.every((name) => {
     const item = byName.get(name);
     if (!item) return false;
-    if (intent.type === "policy") return Boolean(item.policyTop3 || item.realtimeSummary);
+    if (intent.type === "policy") {
+      return intent.specific
+        ? Boolean(item.specificPolicyRecords?.length)
+        : Boolean(item.policyTop3 || item.realtimeSummary);
+    }
     if (intent.type === "proposal_adoption") {
       return Boolean(
         item.party &&
@@ -331,7 +347,13 @@ export function detectCouncilorIntent(
     if (hasProposalAdoptionIntent(text)) {
       return { type: "proposal_adoption", ...named };
     }
-    if (hasPolicyIntent(text)) return { type: "policy", ...named };
+    if (hasPolicyIntent(text)) {
+      return {
+        type: "policy",
+        ...named,
+        specific: requiresSpecificPolicyRecords(text),
+      };
+    }
     if (hasRelationshipIntent(text)) return { type: "relationship", ...named };
     if (hasProfileIntent(text) || /議員/.test(text)) return { type: "profile", ...named };
     return { type: "profile", ...named };
@@ -571,6 +593,7 @@ export function createSilentLocalToolResponse(input: {
   args?: Record<string, unknown>;
   instructions: string;
   routeId: string;
+  turnId?: string;
 }) {
   return {
     // Official Realtime semantics: text-only disables audio for this response.
@@ -580,6 +603,7 @@ export function createSilentLocalToolResponse(input: {
     metadata: {
       response_purpose: "silent_local_tool",
       local_route_id: input.routeId,
+      ...(input.turnId ? { turn_id: input.turnId } : {}),
     },
     instructions: `${input.instructions}\n只建立 ${input.forcedTool} 的 function call。不得輸出任何查詢前言、過場或給使用者看的文字。參數使用：${JSON.stringify(
       input.args || {}
@@ -589,6 +613,7 @@ export function createSilentLocalToolResponse(input: {
 
 export function createLocalFinalAnswerResponse(input: {
   routeId?: string;
+  turnId?: string;
   instructions?: string;
   route?: CouncilorRealtimeRoute | null;
   toolName?: string | null;
@@ -614,6 +639,12 @@ export function createLocalFinalAnswerResponse(input: {
 
     if (input.route?.intent.type === "proposal_adoption") {
       return "這是政策採納追問：第一句先明確回答。若 data 顯示是現任民進黨議員，且政策與 sharedPolicyTopics 或 realtimeSummary 有明確交集，請說『會，好的建議我們都會採納』，接著具體說會怎麼優化、擴大或落地；不要先講程序或用空泛的『會審慎評估』迴避。若沒有已確認交集，改說會納入市政評估，不得捏造已共同提案。若是其他黨議員，不要直接承諾整套政見；自然說『其他黨議員的每一項提議，我不會假裝全部都清楚；不過好的建議不分黨派，我都會虛心請教、認真考慮，能讓台北更好的就採納』，再依 data 補充已確認的具體議題。";
+    }
+
+    if (input.route?.intent.type === "policy") {
+      return input.route.intent.specific
+        ? "這是具體政策紀錄查詢：優先使用 specificPolicyRecords，說清楚要解決的問題、具體主張、紀錄類型、已知狀態與來源。evidenceLevel=source_summary 時只能稱為公開倡議摘要，不得捏造成有案號的議會提案；currentStatus=unknown 時不得宣稱已採納或完成。"
+        : "先用 policyTop3 概括政策重點；若使用者問具體哪一案、日期、質詢、回應或進度，再依 specificPolicyRecords 回答，不得只重複 topic tag。";
     }
 
     if (input.route?.intent.type === "relationship") {
@@ -644,17 +675,22 @@ export function createLocalFinalAnswerResponse(input: {
   return {
     output_modalities: ["audio"],
     tool_choice: "none",
+    max_output_tokens: /詳細|展開|完整|全部/.test(input.transcript || "")
+      ? 900
+      : 420,
     metadata: {
       response_purpose: "local_tool_final_answer",
       ...(input.routeId ? { local_route_id: input.routeId } : {}),
+      ...(input.turnId ? { turn_id: input.turnId } : {}),
     },
-    instructions: `${personaAnchor}\n${naturalCivicAnswerGuidance}\n${taskInstructions}`,
+    instructions: `${personaAnchor}\n${naturalCivicAnswerGuidance}\n${taskInstructions}\n語音第一層預設 1～4 句、最多 3 個重點；只有使用者明確要求詳細、展開、完整或全部列出時才加長。政治人物、人名、組織、日期與政策名稱只能來自本回合 transcript、function output、session 穩定資料或已查核來源；不得突然加入沒有 grounding 的名字。`,
   };
 }
 
 export function createCachedCouncilorFinalResponse(
   route: CouncilorRealtimeRoute,
-  routeId?: string
+  routeId?: string,
+  turnId?: string
 ) {
   const adoptionGuidance =
     route.intent.type === "proposal_adoption"
@@ -666,6 +702,7 @@ export function createCachedCouncilorFinalResponse(
   return createLocalFinalAnswerResponse({
     route,
     routeId,
+    turnId,
     instructions: `${adoptionGuidance}沿用上一輪已成功的 Councilor Local KB 結果回答這個 follow-up，不要再次查 Tool。intent=${route.intent.type}；entities=${route.entities.join(
       "、"
     )}；cached=${JSON.stringify(route.cachedResult)}。直接回答，不要提到快取或查詢流程。`,

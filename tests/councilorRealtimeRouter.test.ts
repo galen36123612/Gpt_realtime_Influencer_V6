@@ -30,8 +30,30 @@ test("T1 顏若芳政策：deterministic by-name policy route", () => {
   const result = executed.result.data[0];
   assert.equal(result.name, "顏若芳");
   assert.equal(result.policyTop3.length, 3);
+  assert.ok(result.specificPolicyRecords.length >= 2);
   assert.match(result.realtimeSummary.policies, /母嬰育兒.*智慧交通.*河岸文化.*國際城市/);
   assert.equal(executed.result.shouldVerifyLatest, false);
+});
+
+test("具體提案問法 bypasses summary cache and requires policy records", () => {
+  const summary = requireRoute("顏若芳關心什麼？");
+  assert.equal(summary.route?.intent.type, "policy");
+  assert.equal(
+    summary.route?.intent.type === "policy" && summary.route.intent.specific,
+    false
+  );
+
+  const specific = requireRoute("顏若芳具體提過哪一案？");
+  assert.equal(specific.route?.intent.type, "policy");
+  assert.equal(
+    specific.route?.intent.type === "policy" && specific.route.intent.specific,
+    true
+  );
+  assert.deepEqual(specific.route?.args, { name: "顏若芳", detail: "policy" });
+
+  const response = createLocalFinalAnswerResponse({ route: specific.route });
+  assert.match(response.instructions, /specificPolicyRecords/);
+  assert.match(response.instructions, /不得捏造成有案號/);
 });
 
 test("T2 顏若芳 connection：relationship route and grounded summary", () => {

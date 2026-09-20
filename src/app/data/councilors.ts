@@ -828,6 +828,41 @@ export interface CouncilorPolicyItem {
   status?: "current" | "historical" | "campaign";
 }
 
+export type CouncilorPolicyRecordType =
+  | "campaign_platform"
+  | "council_motion"
+  | "interpellation"
+  | "budget_proposal"
+  | "local_advocacy"
+  | "joint_policy"
+  | "completed_result";
+
+export type CouncilorPolicyRecordStatus =
+  | "proposed"
+  | "under_review"
+  | "adopted"
+  | "in_progress"
+  | "completed"
+  | "rejected"
+  | "unknown";
+
+export interface CouncilorPolicyRecord {
+  id: string;
+  title: string;
+  type: CouncilorPolicyRecordType;
+  topic: CouncilorPolicyTopic[];
+  date?: string;
+  targetProblem: string;
+  concreteProposal: string;
+  cityGovernmentResponse?: string;
+  currentStatus?: CouncilorPolicyRecordStatus;
+  sourceTitle?: string;
+  sourceUrl?: string;
+  verifiedAt?: string;
+  /** Prevents a routing summary from being misreported as a numbered motion. */
+  evidenceLevel: "source_verified" | "source_summary";
+}
+
 export type ShenCouncilorEventType =
   | "formal_joint_campaign"
   | "joint_local_visit"
@@ -920,10 +955,73 @@ export interface TaipeiCouncilor extends TaipeiCouncilorBase {
   education: string[];
   experience: string[];
   policyTop3: CouncilorPolicyItem[];
+  /** Routing/index alias retained separately from concrete records. */
+  policyTopics: CouncilorPolicyTopic[];
   policyFocusTags: CouncilorPolicyTopic[];
+  specificPolicyRecords: CouncilorPolicyRecord[];
   profileSourceUrl: string;
   relationToShen: CouncilorShenRelationship;
   partyNomination2026?: CouncilorNominationStatus;
+}
+
+const POLICY_TARGET_PROBLEMS: Partial<
+  Record<CouncilorPolicyTopic, string>
+> = {
+  交通: "通勤壅塞、公共運輸銜接與道路使用效率仍需改善。",
+  捷運: "捷運建設、轉乘與站點周邊最後一哩尚未完整銜接。",
+  行人安全: "行人空間、路口設計與道路安全仍有改善需求。",
+  內湖交通: "內湖早晚尖峰壅塞與公共運輸接駁負擔。",
+  北士科: "北士科開發與周邊居民、公共設施需求需要平衡。",
+  育兒: "家庭育兒成本、照顧時間與支持資源不足。",
+  公托: "公共托育量能、可近性與臨時照顧選擇不足。",
+  母嬰: "孕產與嬰幼兒家庭需要更完整的城市支持。",
+  教育: "校園環境與教育資源需要持續改善。",
+  青年: "青年在居住、參與與發展機會上面臨門檻。",
+  住宅: "居住負擔與住宅品質需要改善。",
+  社宅: "可負擔住宅與社宅供給、服務仍有需求。",
+  都更: "老舊社區更新程序與住戶權益協調困難。",
+  老屋: "老屋安全、維護與高齡居住需求未被完整處理。",
+  電梯無障礙: "無電梯老屋造成高齡者與身障者出入困難。",
+  長照: "家庭照顧負擔與在地長照支持不足。",
+  長者: "高齡者日常生活、社福與社區支持需要補強。",
+  身障: "公共設施與服務仍有無障礙落差。",
+  市場商圈: "市場環境、商圈人流與地方經濟需要改善。",
+  文化: "文化資源、地方特色與公共參與需要更好串連。",
+  運動: "市民運動參與與公共運動設施可近性不足。",
+  動保: "動物福利與城市友善環境仍需改善。",
+  河岸: "河岸公共空間與城市生活連結不足。",
+  環境: "環境品質、極端氣候與永續治理需要補強。",
+  社子島: "社子島長期發展、居民權益與生活環境懸而未決。",
+  地方建設: "選區公共設施與日常生活環境仍有具體缺口。",
+  AI數位: "城市服務數位化與治理效率仍有改善空間。",
+  國際城市: "台北的城市交流與國際連結需要深化。",
+  防災: "城市面對災害與極端天候的應變韌性需要補強。",
+};
+
+function createSpecificPolicyRecords(input: {
+  councilorName: string;
+  policies: CouncilorPolicyItem[];
+  sourceUrl: string;
+  verifiedAt: string;
+}): CouncilorPolicyRecord[] {
+  return input.policies.slice(0, 5).map((policy, index) => {
+    const primaryTopic = policy.tags[0] || "地方建設";
+    return {
+      id: `${input.councilorName}-policy-${index + 1}`,
+      title: policy.title,
+      type: "local_advocacy",
+      topic: policy.tags,
+      targetProblem:
+        POLICY_TARGET_PROBLEMS[primaryTopic] ||
+        `${policy.title}相關的市民需求仍需要具體處理。`,
+      concreteProposal: policy.summary,
+      currentStatus: "unknown",
+      sourceTitle: `${input.councilorName}｜臺北市議會現任議員公開資料`,
+      sourceUrl: policy.sourceUrl || input.sourceUrl,
+      verifiedAt: policy.verifiedAt || input.verifiedAt,
+      evidenceLevel: "source_summary",
+    };
+  });
 }
 
 export const TAIPEI_COUNCILOR_META = {
@@ -2829,6 +2927,14 @@ export const TAIPEI_COUNCILORS: TaipeiCouncilor[] = TAIPEI_COUNCILORS_BASE.map(
           extra.profileSourceUrl || base.sourceUrl,
           extra.relationToShen.verifiedAt
         );
+    const specificPolicyRecords = blueprint
+      ? createSpecificPolicyRecords({
+          councilorName: base.name,
+          policies: policyTop3,
+          sourceUrl: extra.profileSourceUrl || base.sourceUrl,
+          verifiedAt: extra.relationToShen.verifiedAt,
+        })
+      : [];
     const confirmedPublicEvents = extra.relationToShen.confirmedPublicEvents.map(
       (event) => {
         const eventType: ShenCouncilorEventType =
@@ -2891,7 +2997,9 @@ export const TAIPEI_COUNCILORS: TaipeiCouncilor[] = TAIPEI_COUNCILORS_BASE.map(
       ...base,
       ...extra,
       policyTop3,
+      policyTopics: policyFocusTags,
       policyFocusTags,
+      specificPolicyRecords,
       relationToShen: {
         ...extra.relationToShen,
         confirmedPublicEvents,
@@ -3163,7 +3271,9 @@ function projectCouncilor(
     return {
       ...identity,
       policyTop3: item.policyTop3,
+      policyTopics: item.policyTopics,
       policyFocusTags: item.policyFocusTags,
+      specificPolicyRecords: item.specificPolicyRecords,
       sharedPolicyTopics: item.relationToShen.sharedPolicyTopics,
       realtimeSummary: item.relationToShen.realtimeSummary,
     };
@@ -3432,7 +3542,7 @@ export const LOOKUP_TAIPEI_COUNCILORS_TOOL = {
   type: "function",
   name: "lookup_taipei_councilors",
   description:
-    "查詢臺北市現任市議員 Realtime Enriched V4。行政區會先轉成完整複數選區；支援黨籍、政策主題、與沈伯洋的公開關係或共同活動。預設 quick 以降低延遲。",
+    "查詢臺北市現任市議員 Realtime Enriched V21。行政區會先轉成完整複數選區；支援黨籍、政策主題、與沈伯洋的公開關係或共同活動。預設 quick 以降低延遲。",
   parameters: {
     type: "object",
     properties: {
@@ -3520,7 +3630,7 @@ export const LOOKUP_TAIPEI_COUNCILOR_BY_NAME_TOOL = {
   type: "function",
   name: "lookup_taipei_councilor_by_name",
   description:
-    "依姓名查詢臺北市現任市議員。除了黨籍、選區與聯絡方式，也會回傳生日、背景、政策關注，以及與沈伯洋目前可查證的公開互動與可能市政協商領域。",
+    "依姓名查詢臺北市現任市議員。除了黨籍、選區與聯絡方式，也可回傳具體政策紀錄、生日、背景，以及與沈伯洋目前可查證的公開互動與可能市政協商領域。",
   parameters: {
     type: "object",
     properties: {
@@ -3553,6 +3663,7 @@ export const TAIPEI_COUNCILOR_TOOL_INSTRUCTIONS = `
 - 學經歷
 - 政策關注標籤
 - 三項代表政策與 topic alias
+- 18 位現任民進黨議員各 2～5 筆 specificPolicyRecords；topic 只用於搜尋，具體回答以紀錄為準
 - 公開聯絡方式
 - 與沈伯洋目前可查證的公開關係
 - 公開活動 eventType / mediaEventId

@@ -70,6 +70,20 @@ test("prebuilds V4 indexes and fully enriches all 18 current DPP councilors", ()
     dpp.every(
       (item) =>
         item.policyTop3.length === 3 &&
+        item.policyTopics.length > 0 &&
+        item.specificPolicyRecords.length >= 2 &&
+        item.specificPolicyRecords.length <= 5 &&
+        item.specificPolicyRecords.every(
+          (record) =>
+            Boolean(
+              record.id &&
+                record.type &&
+                record.targetProblem &&
+                record.concreteProposal &&
+                record.sourceUrl &&
+                record.verifiedAt
+            )
+        ) &&
         item.policyFocusTags.length > 0 &&
         item.relationToShen.sharedPolicyTopics.length > 0 &&
         Boolean(item.relationToShen.realtimeSummary.relationship) &&
@@ -85,6 +99,25 @@ test("prebuilds V4 indexes and fully enriches all 18 current DPP councilors", ()
   assert.ok((TAIPEI_COUNCILOR_INDEXES.byTopic.get("交通")?.length || 0) > 0);
   assert.ok(
     (TAIPEI_COUNCILOR_INDEXES.byRelationshipType.get("joint_local_visit")?.length || 0) > 0
+  );
+});
+
+test("specific councilor questions return concrete records instead of topic tags only", () => {
+  const result: any = lookupCouncilorByName("顏若芳", "policy");
+  const councilor = result.data[0];
+
+  assert.equal(result.found, true);
+  assert.equal(councilor.name, "顏若芳");
+  assert.ok(councilor.specificPolicyRecords.length >= 2);
+  assert.equal(
+    councilor.specificPolicyRecords.every(
+      (record: any) =>
+        record.targetProblem &&
+        record.concreteProposal &&
+        record.sourceUrl &&
+        record.currentStatus
+    ),
+    true
   );
 });
 

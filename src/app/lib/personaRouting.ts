@@ -1,7 +1,7 @@
+import { normalizeRealtimeTranscript } from "../runtime/entityNormalizer.ts";
+
 export function normalizeShenNameVariants(rawText: string) {
-  return String(rawText || "")
-    .normalize("NFKC")
-    .replace(/[沈審][伯柏][洋楊陽揚]/g, "沈伯洋");
+  return normalizeRealtimeTranscript(rawText).normalized;
 }
 
 /** Keeps self/profile questions in the full session persona instead of Media KB. */
