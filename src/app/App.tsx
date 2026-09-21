@@ -22291,29 +22291,48 @@ import {
 } from "@/app/lib/personaRouting";
 import { summarizeRealtimeResponse } from "@/app/lib/realtimeResponseVisibility";
 import { createWelcomeResponseEvent } from "@/app/lib/welcomeResponse";
+import { normalizeRealtimeTranscript } from "@/app/runtime/entityNormalizer";
+import {
+  classifyRealtimeSafetyIntent,
+  createSafetyInterruptResponse,
+} from "@/app/runtime/safetyInterrupt";
+import {
+  classifyReproductivePrivacyIntent,
+  createPrivacyBoundaryResponse,
+} from "@/app/runtime/privacyBoundary";
+import {
+  beginRealtimeTurn,
+  claimFinalResponseForTurn,
+  createRealtimeTurnState,
+  isCurrentRealtimeTurn,
+  markRealtimeResponseCompleted,
+  observeRealtimeResponseTurn,
+  realtimeEventTurnId,
+  resetRealtimeTurnState,
+  shouldDiscardRealtimeEvent,
+} from "@/app/runtime/realtimeTurnState";
+import { findUngroundedNamedEntities } from "@/app/runtime/namedEntityGuard";
 
 import {
   LOOKUP_TAIPEI_VILLAGE_CHIEF_TOOL,
-  TAIPEI_VILLAGE_CHIEF_TOOL_INSTRUCTIONS,
   executeVillageChiefTool,
 } from "@/app/data/villageChiefs";
 
 import {
   LOOKUP_TAIPEI_COUNCILORS_TOOL,
   LOOKUP_TAIPEI_COUNCILOR_BY_NAME_TOOL,
-  TAIPEI_COUNCILOR_TOOL_INSTRUCTIONS,
   executeCouncilorTool,
 } from "@/app/data/councilors";
 
 import {
   LOOKUP_SHEN_MEDIA_KB_TOOL,
-  SHEN_MEDIA_KB_TOOL_INSTRUCTIONS,
   executeShenMediaKBTool,
 } from "@/app/data/shenMediaKB";
 
 type LogRole = "user" | "assistant" | "system" | "feedback";
 
 interface PendingLocalRoute {
+  turnId: string;
   routeId: string;
   transcript: string;
   startedAt: number;
@@ -22409,6 +22428,7 @@ function AppContent() {
   );
   const pendingLocalRouteRef = useRef<PendingLocalRoute | null>(null);
   const responseCreateCountsByRouteRef = useRef<Map<string, number>>(new Map());
+  const realtimeTurnStateRef = useRef(createRealtimeTurnState());
 
   const peerConnection = useRef<RTCPeerConnection | null>(null);
   const audioElement = useRef<HTMLAudioElement | null>(null);
@@ -22439,6 +22459,7 @@ function AppContent() {
     currentAssistantResponse: {
       isActive: false,
       responseId: null as string | null,
+      turnId: null as string | null,
       textBuffer: "",
       audioTranscriptBuffer: "",
       startTime: 0,
@@ -22657,7 +22678,10 @@ function AppContent() {
     return text;
   }
 
-  async function executeRealtimeTool(call: any) {
+  async function executeRealtimeTool(
+    call: any,
+    pendingRouteState: PendingLocalRoute | null = pendingLocalRouteRef.current
+  ) {
     let args: any = {};
 
     try {
@@ -22670,9 +22694,24 @@ function AppContent() {
     }
 
     const toolStartedAt = performance.now();
-    const pendingRouteState = pendingLocalRouteRef.current;
     const deterministicRoute = pendingRouteState?.route;
     const deterministicToolArgs = pendingRouteState?.toolArgs;
+    const recordToolLatency = () => {
+      const activePending = pendingLocalRouteRef.current;
+      if (
+        pendingRouteState &&
+        activePending &&
+        activePending.routeId === pendingRouteState.routeId &&
+        isCurrentRealtimeTurn(
+          realtimeTurnStateRef.current,
+          pendingRouteState.turnId
+        )
+      ) {
+        activePending.toolLatencyMs = Math.round(
+          performance.now() - toolStartedAt
+        );
+      }
+    };
 
     if (
       deterministicRoute?.forcedTool &&
@@ -22710,11 +22749,7 @@ function AppContent() {
     const villageChiefResult = executeVillageChiefTool(call.name, args);
 
     if (villageChiefResult.handled) {
-      if (pendingLocalRouteRef.current) {
-        pendingLocalRouteRef.current.toolLatencyMs = Math.round(
-          performance.now() - toolStartedAt
-        );
-      }
+      recordToolLatency();
       postLog({
         role: "system",
         content: `[LOCAL KB] tool=${call.name} district=${String(
@@ -22739,11 +22774,7 @@ function AppContent() {
         councilorResult.result
       );
 
-      if (pendingLocalRouteRef.current) {
-        pendingLocalRouteRef.current.toolLatencyMs = Math.round(
-          performance.now() - toolStartedAt
-        );
-      }
+      recordToolLatency();
 
       postLog({
         role: "system",
@@ -22768,16 +22799,12 @@ function AppContent() {
       localConversationContextRef.current.lastMediaToolResult =
         shenMediaResult.result;
 
-      if (pendingLocalRouteRef.current?.topic) {
+      if (pendingRouteState?.topic) {
         localConversationContextRef.current.activePolicyTopic =
-          pendingLocalRouteRef.current.topic;
+          pendingRouteState.topic;
       }
 
-      if (pendingLocalRouteRef.current) {
-        pendingLocalRouteRef.current.toolLatencyMs = Math.round(
-          performance.now() - toolStartedAt
-        );
-      }
+      recordToolLatency();
       postLog({
         role: "system",
         content: `[LOCAL KB] tool=${call.name} query=${String(
@@ -22864,7 +22891,23 @@ function AppContent() {
     if (eventObj?.type === "response.create") {
       const metadata = eventObj?.response?.metadata || {};
       const routeId = String(metadata?.local_route_id || "").trim();
+      const turnId = String(metadata?.turn_id || "").trim();
+      const responsePurpose = String(metadata?.response_purpose || "").trim();
       let routeResponseCreateCount: number | null = null;
+
+      if (
+        dc?.readyState === "open" &&
+        turnId &&
+        responsePurpose !== "silent_local_tool" &&
+        !claimFinalResponseForTurn(realtimeTurnStateRef.current, turnId)
+      ) {
+        console.warn("[REALTIME_RESPONSE_DEDUP] blocked duplicate/stale final", {
+          turnId,
+          responsePurpose,
+          triggerSource: eventNameSuffix,
+        });
+        return false;
+      }
 
       if (routeId) {
         routeResponseCreateCount =
@@ -22879,6 +22922,7 @@ function AppContent() {
         phase: "client_response_create",
         triggerSource: eventNameSuffix,
         responsePurpose: metadata?.response_purpose || null,
+        turnId: turnId || null,
         localRouteId: routeId || null,
         routeResponseCreateCount,
         outputModalities: eventObj?.response?.output_modalities || null,
@@ -22908,13 +22952,85 @@ function AppContent() {
     return false;
   };
 
-  const sendResponseForUserText = (text: string, eventNameSuffix: string) => {
+  const sendResponseForUserText = (
+    text: string,
+    eventNameSuffix: string,
+    userItemId?: string
+  ) => {
     if (!sessionToolsReadyRef.current) {
       console.error("Realtime response blocked: required tools are not configured yet");
       return false;
     }
 
-    const normalizedText = normalizeShenNameVariants(text);
+    const normalizedTranscript = normalizeRealtimeTranscript(text);
+    const normalizedText = normalizeShenNameVariants(
+      normalizedTranscript.normalized
+    );
+    const safetyIntent = classifyRealtimeSafetyIntent(normalizedText);
+    const previousTurn = realtimeTurnStateRef.current.currentTurn;
+
+    if (
+      previousTurn &&
+      (conversationState.current.currentAssistantResponse.isActive ||
+        pendingLocalRouteRef.current)
+    ) {
+      sendClientEvent(
+        { type: "response.cancel" },
+        "(latest finalized utterance supersedes previous turn)"
+      );
+      if (isOutputAudioBufferActiveRef.current) {
+        sendClientEvent(
+          { type: "output_audio_buffer.clear" },
+          "(latest finalized utterance clears previous audio)"
+        );
+      }
+    }
+
+    pendingLocalRouteRef.current = null;
+    const turn = beginRealtimeTurn(realtimeTurnStateRef.current, {
+      rawTranscript: text,
+      normalizedTranscript: normalizedText,
+      userItemId,
+      safetyIntent,
+    });
+
+    if (normalizedTranscript.corrections.length) {
+      postLog({
+        role: "system",
+        content: `[ASR_NORMALIZED] turn=${turn.id} ${JSON.stringify(
+          normalizedTranscript.corrections
+        )}`,
+        eventId: `asr_normalized_${turn.id}`,
+      });
+    }
+
+    if (safetyIntent !== "none") {
+      return sendClientEvent(
+        {
+          type: "response.create",
+          response: createSafetyInterruptResponse({
+            turnId: turn.id,
+            intent: safetyIntent,
+          }),
+        },
+        `${eventNameSuffix} (latest-turn safety interrupt)`
+      );
+    }
+
+    const privacyIntent = classifyReproductivePrivacyIntent(normalizedText);
+    if (privacyIntent !== "none") {
+      return sendClientEvent(
+        {
+          type: "response.create",
+          response: createPrivacyBoundaryResponse({
+            turnId: turn.id,
+            connectsToPolicy: /政策|育兒|憑什麼|市長/.test(normalizedText),
+          }),
+        },
+        `${eventNameSuffix} (reproductive privacy boundary)`
+      );
+    }
+
     const previousTurns = recentUserTurnsRef.current.slice(-6);
     const queryTurns = [...previousTurns, normalizedText]
       .filter(Boolean)
@@ -22925,14 +23041,19 @@ function AppContent() {
     }
 
     if (isShenPersonaProfileQuestion(normalizedText)) {
-      pendingLocalRouteRef.current = null;
       return sendClientEvent(
         {
           type: "response.create",
           response: {
             output_modalities: ["audio"],
             tool_choice: "none",
-            metadata: { response_purpose: "persona_profile" },
+            max_output_tokens: /詳細|展開|完整/.test(normalizedText) ? 700 : 320,
+            metadata: {
+              response_purpose: "persona_profile",
+              turn_id: turn.id,
+            },
+            instructions:
+              "直接依 V21 人格與穩定人物資料回答最新一句；第一句就是答案，預設 1～4 句，不要查詢旁白、客服式尾巴或無脈絡的人名。",
           },
         },
         `${eventNameSuffix} (AI mayor persona answer)`
@@ -22965,7 +23086,7 @@ function AppContent() {
       : mediaDecision?.toolName ||
         selectTaipeiCivicTool(normalizedText, previousTurns);
     const forcedTool = councilorRoute?.forcedTool || fallbackTool;
-    const routeId = `local_route_${Date.now()}_${Math.random()
+    const routeId = `local_route_${turn.sequence}_${Date.now()}_${Math.random()
       .toString(36)
       .slice(2)}`;
 
@@ -22990,6 +23111,7 @@ function AppContent() {
         localConversationContextRef.current.activeToolDomain = "media";
         localConversationContextRef.current.lastMediaToolResult = result;
         pendingLocalRouteRef.current = {
+          turnId: turn.id,
           routeId,
           transcript: text,
           startedAt: Date.now(),
@@ -23031,6 +23153,7 @@ function AppContent() {
           {
             type: "response.create",
             response: createLocalFinalAnswerResponse({
+              turnId: turn.id,
               routeId,
               toolName: mediaDecision.toolName,
               transcript: text,
@@ -23046,6 +23169,7 @@ function AppContent() {
 
     if (councilorRoute?.cacheHit) {
       pendingLocalRouteRef.current = {
+        turnId: turn.id,
         routeId,
         transcript: text,
         startedAt: Date.now(),
@@ -23070,7 +23194,8 @@ function AppContent() {
           type: "response.create",
           response: createCachedCouncilorFinalResponse(
             councilorRoute,
-            routeId
+            routeId,
+            turn.id
           ),
         },
         `${eventNameSuffix} (cached councilor final answer)`
@@ -23087,6 +23212,7 @@ function AppContent() {
       }
 
       pendingLocalRouteRef.current = {
+        turnId: turn.id,
         routeId,
         transcript: text,
         startedAt: Date.now(),
@@ -23136,6 +23262,7 @@ function AppContent() {
             args: councilorRoute?.args || mediaDecision?.args,
             instructions: toolInstructions,
             routeId,
+            turnId: turn.id,
           }),
         },
         `${eventNameSuffix} (silent forced tool: ${forcedTool})`
@@ -23147,13 +23274,39 @@ function AppContent() {
     return sendClientEvent(
       {
         type: "response.create",
-        response: { output_modalities: ["audio"] },
+        response: {
+          output_modalities: ["audio"],
+          tool_choice: "none",
+          max_output_tokens: /詳細|展開|完整|全部/.test(normalizedText)
+            ? 900
+            : 360,
+          metadata: {
+            response_purpose: "direct_answer",
+            turn_id: turn.id,
+          },
+          instructions:
+            "只回答最新一句。第一句直接回答，語音預設 1～4 句、最多 3 個重點；不要查詢旁白、重複開場、客服式結尾或加入沒有 grounding 的政治人物姓名。",
+        },
       },
       eventNameSuffix
     );
   };
 
-  const processAppManagedToolCalls = (functionCalls: any[]) => {
+  const processAppManagedToolCalls = (
+    functionCalls: any[],
+    responseTurnId?: string
+  ) => {
+    const pendingRouteAtStart = pendingLocalRouteRef.current;
+    const toolTurnId =
+      responseTurnId || pendingRouteAtStart?.turnId || "";
+
+    if (
+      toolTurnId &&
+      !isCurrentRealtimeTurn(realtimeTurnStateRef.current, toolTurnId)
+    ) {
+      return false;
+    }
+
     const callsToProcess = functionCalls.filter(
       (call: any) =>
         call?.call_id &&
@@ -23172,9 +23325,34 @@ function AppContent() {
         let shouldFallbackToWeb = false;
 
         for (const call of callsToProcess) {
+          if (
+            toolTurnId &&
+            !isCurrentRealtimeTurn(realtimeTurnStateRef.current, toolTurnId)
+          ) {
+            console.info("[REALTIME_STALE_TOOL] discarded before execution", {
+              toolTurnId,
+              tool: call.name,
+            });
+            return;
+          }
+
           console.log("🛠️ Executing tool:", call.name, call.call_id);
 
-          const toolResult: any = await executeRealtimeTool(call);
+          const toolResult: any = await executeRealtimeTool(
+            call,
+            pendingRouteAtStart
+          );
+
+          if (
+            toolTurnId &&
+            !isCurrentRealtimeTurn(realtimeTurnStateRef.current, toolTurnId)
+          ) {
+            console.info("[REALTIME_STALE_TOOL] result ignored", {
+              toolTurnId,
+              tool: call.name,
+            });
+            return;
+          }
 
           console.log("✅ Tool result:", call.name, toolResult);
           shouldFallbackToWeb ||= Boolean(
@@ -23196,6 +23374,17 @@ function AppContent() {
         }
 
         const pendingRoute = pendingLocalRouteRef.current;
+        if (
+          !pendingRoute ||
+          (toolTurnId && pendingRoute.turnId !== toolTurnId) ||
+          (toolTurnId &&
+            !isCurrentRealtimeTurn(realtimeTurnStateRef.current, toolTurnId))
+        ) {
+          console.info("[REALTIME_STALE_TOOL] final response skipped", {
+            toolTurnId,
+          });
+          return;
+        }
         const routeId = pendingRoute?.routeId;
         const followUpResponse: Record<string, any> = shouldFallbackToWeb
           ? createSilentLocalToolResponse({
@@ -23204,8 +23393,10 @@ function AppContent() {
                 " → "
               )}`,
               routeId: routeId || `web_fallback_${Date.now()}`,
+              turnId: pendingRoute.turnId,
             })
           : createLocalFinalAnswerResponse({
+              turnId: pendingRoute.turnId,
               routeId,
               route: pendingRoute?.route,
               toolName: pendingRoute?.forcedTool || callsToProcess[0]?.name,
@@ -23265,6 +23456,8 @@ function AppContent() {
     sendClientEvent,
     setSelectedAgentName,
     setIsOutputAudioBufferActive,
+    shouldDiscardAssistantEvent: (event) =>
+      shouldDiscardRealtimeEvent(realtimeTurnStateRef.current, event),
   });
 
   useEffect(() => {
@@ -23463,7 +23656,25 @@ function AppContent() {
           return;
         }
 
+        observeRealtimeResponseTurn(realtimeTurnStateRef.current, eventData);
+        const discardStaleResponseEvent = shouldDiscardRealtimeEvent(
+          realtimeTurnStateRef.current,
+          eventData
+        );
+
         handleServerEventRef.current(eventData);
+
+        if (discardStaleResponseEvent) {
+          console.info("[REALTIME_STALE_EVENT] discarded", {
+            type: eventData?.type,
+            responseId: eventData?.response?.id || eventData?.response_id || null,
+            turnId: realtimeEventTurnId(
+              realtimeTurnStateRef.current,
+              eventData
+            ),
+          });
+          return;
+        }
 
         const eventType = String(eventData?.type || "");
         console.log("📨 Event:", eventType);
@@ -23512,7 +23723,8 @@ function AppContent() {
             respondedAudioItemIdsRef.current.add(eventId);
             sendResponseForUserText(
               normalized === "[inaudible]" ? "" : normalized,
-              "(trigger response after audio transcription)"
+              "(trigger response after audio transcription)",
+              eventId
             );
           }
         }
@@ -23550,12 +23762,20 @@ function AppContent() {
 
           if (!respondedAudioItemIdsRef.current.has(itemId)) {
             respondedAudioItemIdsRef.current.add(itemId);
-            sendResponseForUserText("", "(trigger response after failed transcription)");
+            sendResponseForUserText(
+              "",
+              "(trigger response after failed transcription)",
+              itemId
+            );
           }
         }
 
         if (eventType === "response.created") {
           const responseId = eventData.response?.id || eventData.id;
+          const responseTurnId = realtimeEventTurnId(
+            realtimeTurnStateRef.current,
+            eventData
+          );
           const responseTrace = summarizeRealtimeResponse(eventData);
 
           console.log("[REALTIME_RESPONSE_TRACE]", {
@@ -23570,6 +23790,7 @@ function AppContent() {
           conversationState.current.currentAssistantResponse = {
             isActive: true,
             responseId,
+            turnId: responseTurnId || null,
             textBuffer: "",
             audioTranscriptBuffer: "",
             startTime: Date.now(),
@@ -23652,6 +23873,13 @@ function AppContent() {
 
         if (RESPONSE_DONE_EVENTS.includes(eventType)) {
           const outputItems = eventData?.response?.output || [];
+          const completedResponseId = String(
+            eventData?.response?.id || eventData?.response_id || ""
+          );
+          const completedTurnId = realtimeEventTurnId(
+            realtimeTurnStateRef.current,
+            eventData
+          );
           const responseTrace = summarizeRealtimeResponse(eventData);
           const pendingTraceRoute = pendingLocalRouteRef.current;
           const completedResponseTrace = {
@@ -23690,11 +23918,16 @@ function AppContent() {
             : [];
 
           if (functionCalls.length) {
-            processAppManagedToolCalls(functionCalls);
+            processAppManagedToolCalls(functionCalls, completedTurnId);
+            markRealtimeResponseCompleted(
+              realtimeTurnStateRef.current,
+              completedResponseId
+            );
 
             conversationState.current.currentAssistantResponse = {
               isActive: false,
               responseId: null,
+              turnId: null,
               textBuffer: "",
               audioTranscriptBuffer: "",
               startTime: 0,
@@ -23738,6 +23971,30 @@ function AppContent() {
           }
 
           if (finalText) {
+            const groundingTexts = [
+              realtimeTurnStateRef.current.currentTurn?.normalizedTranscript || "",
+              JSON.stringify(
+                pendingLocalRouteRef.current?.route?.cachedResult ||
+                  localConversationContextRef.current.lastCouncilorToolResult ||
+                  localConversationContextRef.current.lastMediaToolResult ||
+                  ""
+              ),
+              "沈伯洋 蔣萬安 台北市 臺北市 民主進步黨 中國國民黨 台灣民眾黨",
+            ];
+            const ungroundedEntities = findUngroundedNamedEntities(
+              finalText,
+              groundingTexts
+            );
+            if (ungroundedEntities.length) {
+              postLog({
+                role: "system",
+                content: `[ENTITY_GUARD] turn=${completedTurnId || "none"} ungrounded=${ungroundedEntities.join(
+                  ","
+                )}`,
+                eventId: `entity_guard_${completedResponseId || Date.now()}`,
+              });
+            }
+
             const assistantMsg = {
               content: finalText,
               eventId:
@@ -23772,7 +24029,11 @@ function AppContent() {
           const responsePurpose = eventData?.response?.metadata?.response_purpose;
           const pendingRoute = pendingLocalRouteRef.current;
 
-          if (pendingRoute && responsePurpose !== "silent_local_tool") {
+          if (
+            pendingRoute &&
+            responsePurpose !== "silent_local_tool" &&
+            (!completedTurnId || pendingRoute.turnId === completedTurnId)
+          ) {
             const responseLatencyMs = Date.now() - pendingRoute.startedAt;
 
             if (pendingRoute.route) {
@@ -23825,10 +24086,15 @@ function AppContent() {
           conversationState.current.currentAssistantResponse = {
             isActive: false,
             responseId: null,
+            turnId: null,
             textBuffer: "",
             audioTranscriptBuffer: "",
             startTime: 0,
           };
+          markRealtimeResponseCompleted(
+            realtimeTurnStateRef.current,
+            completedResponseId
+          );
         }
 
         if (eventType === "input_audio_buffer.speech_started") {
@@ -23983,6 +24249,7 @@ function AppContent() {
     localConversationContextRef.current = createInitialLocalConversationContext();
     pendingLocalRouteRef.current = null;
     responseCreateCountsByRouteRef.current.clear();
+    resetRealtimeTurnState(realtimeTurnStateRef.current);
     isOutputAudioBufferActiveRef.current = false;
 
     conversationState.current = {
@@ -23990,6 +24257,7 @@ function AppContent() {
       currentAssistantResponse: {
         isActive: false,
         responseId: null,
+        turnId: null,
         textBuffer: "",
         audioTranscriptBuffer: "",
         startTime: 0,
@@ -24022,36 +24290,14 @@ function AppContent() {
 
     const instructions = `${currentAgent?.instructions || ""}
 
-${TAIPEI_VILLAGE_CHIEF_TOOL_INSTRUCTIONS}
+# LOCAL DATA CONTRACT
 
-${TAIPEI_COUNCILOR_TOOL_INSTRUCTIONS}
-
-${SHEN_MEDIA_KB_TOOL_INSTRUCTIONS}
-
-# TOOL PRIORITY
-
-- 使用者問台北市里長、里長電話或里辦公處時，優先呼叫 lookup_taipei_village_chief。
-- 使用者只提供里長姓名、只提供里名、或把姓名分成多回合說時，也要先呼叫 lookup_taipei_village_chief；不要堅持索取完整「行政區＋里名」。
-- 如果本地里長資料找不到、是代理/特殊狀態，或使用者特別問「最新」「現在現任」，再呼叫 web_search 查最新官方資料。
-- 使用者問某行政區有哪些台北市議員時，優先呼叫 lookup_taipei_councilors。
-- 使用者直接問某位台北市議員的電話、Email、黨籍或選區時，優先呼叫 lookup_taipei_councilor_by_name。
-- 使用者問議員生日、年齡、背景、學經歷、政策或與沈伯洋的公開關係時，也必須使用本地 councilor tool；姓名可能有語音錯字時先查候選，不要反覆要求使用者補行政區。
-- 如果本地市議員資料找不到，或使用者特別要求「今天最新」「目前最新現任」，再呼叫 web_search，優先查臺北市議會或內政部地方公職人員資訊專區。
-- 使用者問沈伯洋已發生的選戰新聞、公開受訪、登記、政策發布、辯論、蔡英文公開互動或與蔣萬安相關攻防時，優先呼叫 lookup_shen_media_kb，不得直接跳到 web_search。
-- lookup_shen_media_kb 找到資料且 shouldVerifyLatest=false 時，直接依 Local KB 回答，不要再重複搜尋網路；只有 found=false、shouldSearchWeb=true 或 shouldVerifyLatest=true 才呼叫 web_search。
-- 當問題需要公司/內部文件或知識庫內容時，請先使用 file_search 檢索向量庫，並在回答中附上來源。
-- 當問題需要本地 KB 快照之後的最新外部資訊（新聞、價格、政策、版本更新）時，再呼叫 web_search，並用搜尋結果回答、附上來源。
-- 不得用模型記憶猜里長姓名、里長電話、市議員姓名或聯絡方式。
-- 如果使用者語音聽起來不清楚、內容不完整、像背景音，或和目前對話脈絡明顯不相關，不要直接推銷或回答；請先說：「我剛剛沒有聽清楚，可以再說一次嗎？」
-- 如果轉錄看起來是英文短句，例如 Yeah、Why、Bye、way over there，但前後脈絡主要是中文，請優先判斷可能是誤辨識，先確認，不要直接結束對話或切到英文回覆。
-- 「沈柏楊／審柏楊／沈柏洋」等常見語音轉錄異體都指沈伯洋；不要因此否認 AI 市長身分。
-- 自我介紹、基本資料、生日、學經歷、婚姻與家庭問題屬於 MY PROFILE 人物題，直接依 Fact Bank 用第一人稱回答，不要誤送近期 Media KB。
-
-# 每回合必須完成答案
-
-- 第一個句子就回答實質內容，不要先說「我查一下／我整理一下／我來說清楚／接下來回答」。
-- Local Tool 呼叫完成後必須根據 function output 產生一次 final answer，不得停在工具呼叫或回答預告。
-- 地區議員名單必須逐字依 Tool data 回答，每個姓名一次，不得漏人、重複或自行補人。`;
+- App 已負責 ASR 正規化、選區映射、deterministic routing、silent Tool、turn 中斷與回覆去重；不要描述這些內部流程。
+- Local Tool 的 function output 是人物、名單、聯絡方式、政策紀錄與公開關係的事實基礎，不得用模型記憶補人名、日期、數字或事件。
+- found=true 且 status=current 時直接回答；只有 not_found、ambiguous、stale 或 shouldVerifyLatest=true 才澄清或查最新來源。
+- 工具回來後只回答最新一句，第一句就是結果；預設 1～4 句、最多 3 個重點，不要查詢旁白或客服式尾巴。
+- 完整名單逐字依 data 回答，每個姓名一次，不漏人、不重複、不自行增補。
+- 若轉錄內容為空白或 [inaudible]，只說「我剛剛沒有聽清楚，可以再說一次嗎？」`;
 
     const webSearchTool = {
       type: "function",
@@ -24173,7 +24419,7 @@ ${SHEN_MEDIA_KB_TOOL_INSTRUCTIONS}
 
     setUserText("");
 
-    sendResponseForUserText(textToSend, "(trigger response)");
+    sendResponseForUserText(textToSend, "(trigger response)", eventId);
   };
 
   const handleTalkButtonDown = () => {

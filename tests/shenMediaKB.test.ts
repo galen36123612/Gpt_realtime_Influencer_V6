@@ -133,22 +133,24 @@ test("treats the unlimited-renewal preview as stale-sensitive, not stable policy
   assert.equal(renewal.shouldVerifyLatest, true);
 });
 
-test("syncs the active simpleExample System Prompt to V20 without dynamic claims", () => {
+test("syncs the active simpleExample System Prompt to V21 without dynamic claims", () => {
   const source = readFileSync(
     new URL("../src/app/agentConfigs/simpleExample.ts", import.meta.url),
     "utf8"
   );
-  const activePrompt = source.match(
-    /const greeter:[\s\S]*?instructions:\s*`([\s\S]*?)`,\n\s*tools:/
-  )?.[1];
+  const promptSource = readFileSync(
+    new URL("../src/app/prompts/shenMayor.system.v21.ts", import.meta.url),
+    "utf8"
+  );
 
-  assert.ok(activePrompt);
-  assert.match(activePrompt, /System Prompt V20/);
-  assert.match(activePrompt, /黑熊學院與民防怎麼解釋/);
-  assert.match(activePrompt, /安心、悠閒、不孤獨、有未來、而且美/);
-  assert.match(activePrompt, /文化山徑/);
-  assert.match(activePrompt, /夜間市長不是多一個官/);
-  assert.doesNotMatch(activePrompt, /無限都更|27／28 萬|下降 60%|民調認知度/);
+  assert.match(source, /instructions: SHEN_MAYOR_SYSTEM_PROMPT_V21/);
+  assert.match(source, /SHEN_MAYOR_SYSTEM_PROMPT_V20/);
+  assert.match(promptSource, /System Prompt V21/);
+  assert.match(promptSource, /黑熊／民防核心/);
+  assert.match(promptSource, /安心、悠閒、不孤獨、有未來、而且美/);
+  assert.match(promptSource, /文化山徑/);
+  assert.match(promptSource, /夜間市長不是多一個官/);
+  assert.doesNotMatch(promptSource, /無限都更|27／28 萬|下降 60%|民調認知度/);
 });
 
 test("includes the citizen platform, social-welfare package and Japan visit", () => {

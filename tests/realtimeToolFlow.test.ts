@@ -11,7 +11,9 @@ test("live App uses the stable forced-tool lifecycle and hides persona control t
 
   assert.match(liveApp, /create_response: false/);
   assert.match(liveApp, /createSilentLocalToolResponse\(/);
-  assert.match(liveApp, /processAppManagedToolCalls\(functionCalls\)/);
+  assert.match(liveApp, /processAppManagedToolCalls\(functionCalls, completedTurnId\)/);
+  assert.match(liveApp, /beginRealtimeTurn/);
+  assert.match(liveApp, /shouldDiscardRealtimeEvent/);
   assert.doesNotMatch(liveApp, /createSyntheticFunctionCallEvent/);
   assert.doesNotMatch(liveApp, /createShenPersonaContextEvent/);
   assert.doesNotMatch(

@@ -935,6 +935,7 @@ export interface UseHandleServerEventParams {
   setSelectedAgentName: (name: string) => void;
   shouldForceResponse?: boolean;
   setIsOutputAudioBufferActive: (active: boolean) => void;
+  shouldDiscardAssistantEvent?: (event: any) => boolean;
 }
 
 type TranscriptRole = "user" | "assistant";
@@ -946,6 +947,7 @@ export function useHandleServerEvent({
   sendClientEvent,
   setSelectedAgentName,
   setIsOutputAudioBufferActive,
+  shouldDiscardAssistantEvent,
 }: UseHandleServerEventParams) {
   const {
     transcriptItems,
@@ -1288,6 +1290,7 @@ export function useHandleServerEvent({
     logServerEvent(serverEvent);
 
     if (
+      shouldDiscardAssistantEvent?.(event) ||
       shouldSuppressRealtimeAssistantOutput(
         event,
         responseVisibilityRef.current
