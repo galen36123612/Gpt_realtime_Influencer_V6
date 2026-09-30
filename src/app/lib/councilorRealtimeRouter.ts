@@ -12,13 +12,29 @@ const TAIPEI_DISTRICTS = Object.keys(DISTRICT_TO_CONSTITUENCY).filter((district)
   district.endsWith("區")
 );
 
+export type CouncilorIntentType =
+  | "list_by_district"
+  | "list_by_party"
+  | "topic_search"
+  | "profile"
+  | "policy"
+  | "proposal_adoption"
+  | "relationship"
+  | "events"
+  | "public_activity_list"
+  | "policy_alignment_list";
+
 export interface LocalConversationContext {
   activeDistrict?: string;
   activeConstituency?: number;
   activeCouncilorNames?: string[];
   activeTopic?: CouncilorPolicyTopic;
+  activePolicyTopic?: string;
   activeToolDomain?: "councilor" | "media" | "village" | "policy";
+  activeCouncilorIntent?: CouncilorIntentType;
+  activeCouncilorParty?: string;
   lastCouncilorToolResult?: unknown;
+  lastMediaToolResult?: unknown;
 }
 
 export type CouncilorIntent =
@@ -27,6 +43,7 @@ export type CouncilorIntent =
   | { type: "topic_search"; topic: CouncilorPolicyTopic; party?: string }
   | { type: "profile"; name: string; names: string[] }
   | { type: "policy"; name: string; names: string[] }
+  | { type: "proposal_adoption"; name: string; names: string[] }
   | { type: "relationship"; name: string; names: string[] }
   | { type: "events"; name: string; names: string[] }
   | { type: "public_activity_list"; party?: string }
@@ -133,7 +150,19 @@ function isPublicActivityList(text: string) {
     /(?:你)?(?:有)?跟(?:其他)?市?議員.*(?:公開行程|公開站台|公開活動|共同活動|同台)/.test(
       value
     ) ||
-    /其他市?議員.*(?:公開行程|公開站台|公開活動|共同活動|同台)/.test(value)
+    /其他市?議員.*(?:公開行程|公開站台|公開活動|共同活動|同台)/.test(value) ||
+    /(?:公開)?(?:替|為|幫).{0,12}市?議員(?:站台|助選)/.test(value)
+  );
+}
+
+function isShortCouncilorFollowUp(text: string) {
+  const value = compact(text);
+  return value.length <= 12 && /^(?:那|那麼|換成|如果是)?.+(?:呢|有哪些|有誰)?$/.test(value);
+}
+
+function isMoreCouncilorsFollowUp(text: string) {
+  return /^(?:那)?(?:還)?有(?:哪些|哪幾位|其他)?市?議員(?:呢)?$/.test(
+    compact(text)
   );
 }
 
@@ -158,7 +187,7 @@ function referencedNames(
 
   const value = compact(text);
   if (
-    /這兩位|那兩位|這些人|那些人|他們|她們|這幾位|剛剛那些/.test(value)
+    /這兩位|那兩位|這些人|那些人|他們|她們|這幾位|剛剛那些|這些意見|這些政見|這些提案|這幾個提案|上述提案|上述政見/.test(value)
   ) {
     return context.activeCouncilorNames || [];
   }
@@ -176,6 +205,12 @@ function referencedNames(
 
 function hasPolicyIntent(text: string) {
   return /政見|訴求|政策|關心什麼|關注什麼|主張什麼|方向一樣/.test(compact(text));
+}
+
+function hasProposalAdoptionIntent(text: string) {
+  return /採納|納入|接受.*建議|這些意見|這些政見|這些提案|這個提案|這項政策|會不會做|會做嗎|當選.*(?:推|做)|市府.*(?:推|做)/.test(
+    compact(text)
+  );
 }
 
 function hasEventIntent(text: string) {
@@ -198,6 +233,7 @@ function hasProfileIntent(text: string) {
 
 function detailForIntent(intent: Exclude<CouncilorIntent, null>) {
   if (intent.type === "policy") return "policy" as CouncilorNameDetail;
+  if (intent.type === "proposal_adoption") return "full" as CouncilorNameDetail;
   if (intent.type === "relationship") return "relationship" as CouncilorNameDetail;
   if (intent.type === "events") return "events" as CouncilorNameDetail;
   if (intent.type === "profile") return "profile" as CouncilorNameDetail;
@@ -222,6 +258,12 @@ function cacheSupportsIntent(
     const item = byName.get(name);
     if (!item) return false;
     if (intent.type === "policy") return Boolean(item.policyTop3 || item.realtimeSummary);
+    if (intent.type === "proposal_adoption") {
+      return Boolean(
+        item.party &&
+          (item.policyTop3 || item.policyFocusTags || item.realtimeSummary?.policies)
+      );
+    }
     if (intent.type === "relationship") {
       return Boolean(item.relationToShen || item.realtimeSummary);
     }
@@ -254,6 +296,19 @@ export function detectCouncilorIntent(
     return { type: "public_activity_list", ...(party ? { party } : {}) };
   }
 
+  if (
+    isMoreCouncilorsFollowUp(text) &&
+    context.activeToolDomain === "councilor" &&
+    context.activeCouncilorIntent === "public_activity_list"
+  ) {
+    return {
+      type: "public_activity_list",
+      ...(context.activeCouncilorParty
+        ? { party: context.activeCouncilorParty }
+        : {}),
+    };
+  }
+
   if (isPolicyAlignmentList(text) && !names.length) {
     if (
       context.activeTopic &&
@@ -273,6 +328,9 @@ export function detectCouncilorIntent(
   if (names.length) {
     const named = { name: names[0], names };
     if (hasEventIntent(text)) return { type: "events", ...named };
+    if (hasProposalAdoptionIntent(text)) {
+      return { type: "proposal_adoption", ...named };
+    }
     if (hasPolicyIntent(text)) return { type: "policy", ...named };
     if (hasRelationshipIntent(text)) return { type: "relationship", ...named };
     if (hasProfileIntent(text) || /議員/.test(text)) return { type: "profile", ...named };
@@ -289,6 +347,24 @@ export function detectCouncilorIntent(
 
   if (/議員/.test(text) && district) {
     return { type: "list_by_district", district };
+  }
+
+  if (
+    district &&
+    isShortCouncilorFollowUp(text) &&
+    context.activeToolDomain === "councilor" &&
+    (context.activeCouncilorIntent === "list_by_district" ||
+      context.activeCouncilorIntent === "list_by_party")
+  ) {
+    return { type: "list_by_district", district };
+  }
+
+  if (
+    party &&
+    isShortCouncilorFollowUp(text) &&
+    context.activeToolDomain === "councilor"
+  ) {
+    return { type: "list_by_party", party };
   }
 
   if (/有沒有議員.*方向一樣|哪些議員.*方向一樣/.test(text) && context.activeTopic) {
@@ -435,6 +511,7 @@ export function routeCouncilorTranscript(
     ...(topic
       ? {
           activeTopic: topic,
+          activePolicyTopic: topic,
           activeToolDomain: "policy" as const,
         }
       : {}),
@@ -450,6 +527,12 @@ export function routeCouncilorTranscript(
     context: {
       ...context,
       activeToolDomain: "councilor",
+      activeCouncilorIntent: route.intent.type,
+      ...("party" in route.intent && route.intent.party
+        ? { activeCouncilorParty: route.intent.party }
+        : route.intent.type === "public_activity_list"
+          ? { activeCouncilorParty: undefined }
+          : {}),
       ...(route.entities.length
         ? { activeCouncilorNames: route.entities }
         : {}),
@@ -529,6 +612,14 @@ export function createLocalFinalAnswerResponse(input: {
       return "第一句先直接點出符合條件的具體議員姓名，再用精簡分組或例子補充；不得只講抽象政策而不報姓名。";
     }
 
+    if (input.route?.intent.type === "proposal_adoption") {
+      return "這是政策採納追問：第一句先明確回答。若 data 顯示是現任民進黨議員，且政策與 sharedPolicyTopics 或 realtimeSummary 有明確交集，請說『會，好的建議我們都會採納』，接著具體說會怎麼優化、擴大或落地；不要先講程序或用空泛的『會審慎評估』迴避。若沒有已確認交集，改說會納入市政評估，不得捏造已共同提案。若是其他黨議員，不要直接承諾整套政見；自然說『其他黨議員的每一項提議，我不會假裝全部都清楚；不過好的建議不分黨派，我都會虛心請教、認真考慮，能讓台北更好的就採納』，再依 data 補充已確認的具體議題。";
+    }
+
+    if (input.route?.intent.type === "relationship") {
+      return "依原問題回答合作或支持關係。若使用者是在問是否支持該民進黨議員，先清楚說選舉上會支持黨正式提名的台北隊夥伴；政策是否採納則依 data 的政策交集分開說，不要用空泛中立句逃避。";
+    }
+
     if (input.toolName === "lookup_taipei_village_chief") {
       return "若使用者只問里長是誰，只回答里名、行政區與現任里長姓名；沒有被問時不要朗讀電話、地址或多餘的查證提醒。";
     }
@@ -540,7 +631,15 @@ export function createLocalFinalAnswerResponse(input: {
     input.instructions ||
     `直接根據剛取得的 function output 完整回答使用者原問題「${String(
       input.transcript || ""
-    ).slice(0, 240)}」。只產生這一個最終答案；第一句就開始講實質答案，不要說我查一下、我看一下、我整理一下、我來說清楚或其他工具過場。${routeGuidance} found=true 且 status=current 時直接有把握回答，不要補大概或最好再查官方。不得捏造 function output 沒有的人名、英文名字、數字或事件。`;
+    ).slice(0, 240)}」。只產生這一個最終答案；第一句就開始講實質答案。${routeGuidance} found=true 且 status=current 時直接有把握回答，不要補大概或最好再查官方。不得捏造 function output 沒有的人名、英文名字、數字或事件。`;
+
+  const naturalCivicAnswerGuidance =
+    input.route ||
+    input.toolName === "lookup_taipei_councilors" ||
+    input.toolName === "lookup_taipei_councilor_by_name" ||
+    input.toolName === "lookup_taipei_village_chief"
+      ? "查詢動作已經完成。若需要交代查證，可以在最終答案同一句自然說『我幫你看了一下，……』或『我查了一下，……』並立刻接答案；不要另外建立查詢前言。不要使用『根據公開資料顯示』『依公開資料』『以公開資料看』這類像資料庫報告的語氣。"
+      : "";
 
   return {
     output_modalities: ["audio"],
@@ -549,14 +648,25 @@ export function createLocalFinalAnswerResponse(input: {
       response_purpose: "local_tool_final_answer",
       ...(input.routeId ? { local_route_id: input.routeId } : {}),
     },
-    instructions: `${personaAnchor}\n${taskInstructions}`,
+    instructions: `${personaAnchor}\n${naturalCivicAnswerGuidance}\n${taskInstructions}`,
   };
 }
 
-export function createCachedCouncilorFinalResponse(route: CouncilorRealtimeRoute) {
+export function createCachedCouncilorFinalResponse(
+  route: CouncilorRealtimeRoute,
+  routeId?: string
+) {
+  const adoptionGuidance =
+    route.intent.type === "proposal_adoption"
+      ? "這是政策採納追問。現任民進黨議員且政策有明確交集時，第一句說『會，好的建議我們都會採納』，再說我會怎麼優化、擴大或落地。其他黨議員不要直接承諾整套政見；請說我不會假裝已掌握每一項提議，但好的建議不分黨派，我都會虛心請教、認真考慮，能讓台北更好的就採納。不要只回答審慎評估，也不得捏造已共同提案。"
+      : route.intent.type === "relationship"
+        ? "若使用者是在問是否支持該民進黨議員，先清楚說選舉上會支持黨正式提名的台北隊夥伴；政策採納要與選舉支持分開說。"
+      : "";
+
   return createLocalFinalAnswerResponse({
     route,
-    instructions: `沿用上一輪已成功的 Councilor Local KB 結果回答這個 follow-up，不要再次查 Tool。intent=${route.intent.type}；entities=${route.entities.join(
+    routeId,
+    instructions: `${adoptionGuidance}沿用上一輪已成功的 Councilor Local KB 結果回答這個 follow-up，不要再次查 Tool。intent=${route.intent.type}；entities=${route.entities.join(
       "、"
     )}；cached=${JSON.stringify(route.cachedResult)}。直接回答，不要提到快取或查詢流程。`,
   });

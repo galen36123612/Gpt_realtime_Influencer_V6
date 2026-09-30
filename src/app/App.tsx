@@ -22273,7 +22273,7 @@ import {
 } from "@/app/lib/civicToolRouting";
 import {
   inferShenMediaKBToolArguments,
-  selectShenMediaKBTool,
+  routeShenMediaTranscript,
 } from "@/app/lib/shenMediaRouting";
 import {
   createCachedCouncilorFinalResponse,
@@ -22289,6 +22289,7 @@ import {
   isShenPersonaProfileQuestion,
   normalizeShenNameVariants,
 } from "@/app/lib/personaRouting";
+import { summarizeRealtimeResponse } from "@/app/lib/realtimeResponseVisibility";
 import { createWelcomeResponseEvent } from "@/app/lib/welcomeResponse";
 
 import {
@@ -22318,6 +22319,11 @@ interface PendingLocalRoute {
   startedAt: number;
   forcedTool: string | null;
   route: CouncilorRealtimeRoute | null;
+  intent?: string;
+  topic?: string;
+  triggerSource?: string;
+  fastPath?: boolean;
+  toolArgs?: Record<string, unknown>;
   toolLatencyMs?: number;
 }
 
@@ -22402,6 +22408,7 @@ function AppContent() {
     createInitialLocalConversationContext()
   );
   const pendingLocalRouteRef = useRef<PendingLocalRoute | null>(null);
+  const responseCreateCountsByRouteRef = useRef<Map<string, number>>(new Map());
 
   const peerConnection = useRef<RTCPeerConnection | null>(null);
   const audioElement = useRef<HTMLAudioElement | null>(null);
@@ -22663,7 +22670,9 @@ function AppContent() {
     }
 
     const toolStartedAt = performance.now();
-    const deterministicRoute = pendingLocalRouteRef.current?.route;
+    const pendingRouteState = pendingLocalRouteRef.current;
+    const deterministicRoute = pendingRouteState?.route;
+    const deterministicToolArgs = pendingRouteState?.toolArgs;
 
     if (
       deterministicRoute?.forcedTool &&
@@ -22675,6 +22684,11 @@ function AppContent() {
         call.name,
         deterministicRoute.args
       );
+    } else if (
+      pendingRouteState?.forcedTool === call.name &&
+      deterministicToolArgs
+    ) {
+      args = { ...deterministicToolArgs };
     } else {
       args = inferTaipeiCivicToolArguments(
         call.name,
@@ -22750,6 +22764,15 @@ function AppContent() {
     const shenMediaResult = executeShenMediaKBTool(call.name, args);
 
     if (shenMediaResult.handled) {
+      localConversationContextRef.current.activeToolDomain = "media";
+      localConversationContextRef.current.lastMediaToolResult =
+        shenMediaResult.result;
+
+      if (pendingLocalRouteRef.current?.topic) {
+        localConversationContextRef.current.activePolicyTopic =
+          pendingLocalRouteRef.current.topic;
+      }
+
       if (pendingLocalRouteRef.current) {
         pendingLocalRouteRef.current.toolLatencyMs = Math.round(
           performance.now() - toolStartedAt
@@ -22838,6 +22861,31 @@ function AppContent() {
   const sendClientEvent = (eventObj: any, eventNameSuffix = "") => {
     const dc = dataChannelRef.current;
 
+    if (eventObj?.type === "response.create") {
+      const metadata = eventObj?.response?.metadata || {};
+      const routeId = String(metadata?.local_route_id || "").trim();
+      let routeResponseCreateCount: number | null = null;
+
+      if (routeId) {
+        routeResponseCreateCount =
+          (responseCreateCountsByRouteRef.current.get(routeId) || 0) + 1;
+        responseCreateCountsByRouteRef.current.set(
+          routeId,
+          routeResponseCreateCount
+        );
+      }
+
+      console.log("[REALTIME_RESPONSE_TRACE]", {
+        phase: "client_response_create",
+        triggerSource: eventNameSuffix,
+        responsePurpose: metadata?.response_purpose || null,
+        localRouteId: routeId || null,
+        routeResponseCreateCount,
+        outputModalities: eventObj?.response?.output_modalities || null,
+        forcedTool: eventObj?.response?.tool_choice?.name || null,
+      });
+    }
+
     if (dc && dc.readyState === "open") {
       logClientEvent(eventObj, eventNameSuffix);
       dc.send(JSON.stringify(eventObj));
@@ -22898,9 +22946,23 @@ function AppContent() {
     localConversationContextRef.current = councilorDecision.context;
 
     const councilorRoute = councilorDecision.route;
+    const mediaDecision = councilorRoute
+      ? null
+      : routeShenMediaTranscript(
+          normalizedText,
+          previousTurns,
+          localConversationContextRef.current.activePolicyTopic
+        );
+
+    if (mediaDecision?.topic) {
+      localConversationContextRef.current.activePolicyTopic =
+        mediaDecision.topic;
+      localConversationContextRef.current.activeToolDomain = "media";
+    }
+
     const fallbackTool = councilorRoute
       ? null
-      : selectShenMediaKBTool(normalizedText, previousTurns) ||
+      : mediaDecision?.toolName ||
         selectTaipeiCivicTool(normalizedText, previousTurns);
     const forcedTool = councilorRoute?.forcedTool || fallbackTool;
     const routeId = `local_route_${Date.now()}_${Math.random()
@@ -22911,6 +22973,77 @@ function AppContent() {
       lastCivicQueryTurnsRef.current = queryTurns;
     }
 
+    if (mediaDecision?.fastPath) {
+      const toolStartedAt = performance.now();
+      const mediaLookup = executeShenMediaKBTool(
+        mediaDecision.toolName,
+        mediaDecision.args
+      );
+      const toolLatencyMs = Math.round(performance.now() - toolStartedAt);
+      const result: any = mediaLookup.handled ? mediaLookup.result : null;
+
+      if (
+        result?.found &&
+        !result?.shouldSearchWeb &&
+        !result?.shouldVerifyLatest
+      ) {
+        localConversationContextRef.current.activeToolDomain = "media";
+        localConversationContextRef.current.lastMediaToolResult = result;
+        pendingLocalRouteRef.current = {
+          routeId,
+          transcript: text,
+          startedAt: Date.now(),
+          forcedTool: mediaDecision.toolName,
+          route: null,
+          intent: mediaDecision.intent,
+          topic: mediaDecision.topic,
+          triggerSource: eventNameSuffix,
+          fastPath: true,
+          toolArgs: mediaDecision.args,
+          toolLatencyMs,
+        };
+
+        const routerLog = {
+          transcript: text,
+          intent: mediaDecision.intent,
+          entity: ["蔣萬安"],
+          topic: mediaDecision.topic || null,
+          forcedTool: mediaDecision.toolName,
+          detail: "comparison",
+          cacheHit: false,
+          fastPath: true,
+          toolLatencyMs,
+          responseLatencyMs: null,
+        };
+        console.log("[LOCAL_ROUTER]", routerLog);
+        postLog({
+          role: "system",
+          content: `[LOCAL_ROUTER] ${JSON.stringify(routerLog)}`,
+          eventId: `local_router_${routeId}`,
+        });
+
+        const topicGuidance =
+          mediaDecision.topic === "內湖交通"
+            ? "第一句直接說『有，他有做，而且不能說沒成績。』接著具體承認資料中的既有措施與成果，再把差異拉回企業錯峰、最後一哩、住宅、通勤時間與可驗收 KPI。"
+            : "先具體承認現任市府已做的部分，再說我的方案要如何補強執行與可驗收成果。";
+
+        return sendClientEvent(
+          {
+            type: "response.create",
+            response: createLocalFinalAnswerResponse({
+              routeId,
+              toolName: mediaDecision.toolName,
+              transcript: text,
+              instructions: `這是現任市府政策比較題，已由 App 直接完成 Local Media KB 查詢，不要再呼叫 Tool 或 Web。${topicGuidance} 只根據以下已查核資料回答，不得虛構新數字或新事件：${serializeRealtimeToolResult(
+                result
+              )}。答案自然、有現場感，直接講結果；不要說我查一下、我看看、我整理一下、讓我確認或 Let me。`,
+            }),
+          },
+          `${eventNameSuffix} (media comparison fast path)`
+        );
+      }
+    }
+
     if (councilorRoute?.cacheHit) {
       pendingLocalRouteRef.current = {
         routeId,
@@ -22918,6 +23051,9 @@ function AppContent() {
         startedAt: Date.now(),
         forcedTool: null,
         route: councilorRoute,
+        intent: councilorRoute.intent.type,
+        topic: councilorRoute.topic,
+        triggerSource: eventNameSuffix,
         toolLatencyMs: 0,
       };
 
@@ -22932,7 +23068,10 @@ function AppContent() {
       return sendClientEvent(
         {
           type: "response.create",
-          response: createCachedCouncilorFinalResponse(councilorRoute),
+          response: createCachedCouncilorFinalResponse(
+            councilorRoute,
+            routeId
+          ),
         },
         `${eventNameSuffix} (cached councilor final answer)`
       );
@@ -22953,13 +23092,22 @@ function AppContent() {
         startedAt: Date.now(),
         forcedTool,
         route: councilorRoute,
+        intent:
+          councilorRoute?.intent.type ||
+          mediaDecision?.intent ||
+          forcedTool,
+        topic: councilorRoute?.topic || mediaDecision?.topic,
+        triggerSource: eventNameSuffix,
+        toolArgs: councilorRoute?.args || mediaDecision?.args,
       };
 
       const toolInstructions =
         forcedTool === "lookup_shen_media_kb"
-          ? `請結合最近的使用者對話理解新聞、受訪、選戰或政策查詢：${queryTurns.join(
-              " → "
-            )}。直接呼叫 lookup_shen_media_kb；query 只放核心人物／事件關鍵字，並依 freshness 規則設定 requiresLatest。`
+          ? mediaDecision?.intent === "incumbent_policy_comparison"
+            ? `deterministic incumbent comparison topic=${mediaDecision.topic}，使用 App 已解析的精確參數。`
+            : `請結合最近的使用者對話理解新聞、受訪、選戰或政策查詢：${queryTurns.join(
+                " → "
+              )}。直接呼叫 lookup_shen_media_kb；query 只放核心人物／事件關鍵字，並依 freshness 規則設定 requiresLatest。`
           : councilorRoute
             ? `deterministic councilor intent=${councilorRoute.intent.type}，使用 App 已解析的精確參數。`
             : `請結合最近的使用者對話理解查詢線索：${queryTurns.join(
@@ -22985,7 +23133,7 @@ function AppContent() {
           type: "response.create",
           response: createSilentLocalToolResponse({
             forcedTool,
-            args: councilorRoute?.args,
+            args: councilorRoute?.args || mediaDecision?.args,
             instructions: toolInstructions,
             routeId,
           }),
@@ -23408,6 +23556,16 @@ function AppContent() {
 
         if (eventType === "response.created") {
           const responseId = eventData.response?.id || eventData.id;
+          const responseTrace = summarizeRealtimeResponse(eventData);
+
+          console.log("[REALTIME_RESPONSE_TRACE]", {
+            phase: "server_response_created",
+            ...responseTrace,
+            pendingIntent: pendingLocalRouteRef.current?.intent || null,
+            pendingTopic: pendingLocalRouteRef.current?.topic || null,
+            triggerSource:
+              pendingLocalRouteRef.current?.triggerSource || null,
+          });
 
           conversationState.current.currentAssistantResponse = {
             isActive: true,
@@ -23494,6 +23652,34 @@ function AppContent() {
 
         if (RESPONSE_DONE_EVENTS.includes(eventType)) {
           const outputItems = eventData?.response?.output || [];
+          const responseTrace = summarizeRealtimeResponse(eventData);
+          const pendingTraceRoute = pendingLocalRouteRef.current;
+          const completedResponseTrace = {
+            phase: "server_response_done",
+            ...responseTrace,
+            pendingIntent: pendingTraceRoute?.intent || null,
+            pendingTopic: pendingTraceRoute?.topic || null,
+            triggerSource: pendingTraceRoute?.triggerSource || null,
+            fastPath: pendingTraceRoute?.fastPath || false,
+            elapsedMs: pendingTraceRoute
+              ? Date.now() - pendingTraceRoute.startedAt
+              : null,
+          };
+
+          console.log("[REALTIME_RESPONSE_TRACE]", completedResponseTrace);
+
+          if (responseTrace.localRouteId || pendingTraceRoute?.routeId) {
+            postLog({
+              role: "system",
+              content: `[REALTIME_RESPONSE_TRACE] ${JSON.stringify(
+                completedResponseTrace
+              )}`,
+              eventId: `response_trace_${
+                responseTrace.responseId || Date.now()
+              }`,
+            });
+          }
+
           const functionCalls = Array.isArray(outputItems)
             ? outputItems.filter(
                 (it: any) =>
@@ -23603,8 +23789,36 @@ function AppContent() {
                 content: `[LOCAL_ROUTER] ${JSON.stringify(routerLog)}`,
                 eventId: `local_router_done_${pendingRoute.routeId}`,
               });
+            } else if (pendingRoute.intent) {
+              const routerLog = {
+                transcript: pendingRoute.transcript,
+                intent: pendingRoute.intent,
+                entity:
+                  pendingRoute.intent === "incumbent_policy_comparison"
+                    ? ["蔣萬安"]
+                    : [],
+                district: null,
+                constituency: null,
+                party: null,
+                topic: pendingRoute.topic || null,
+                forcedTool: pendingRoute.forcedTool,
+                detail: pendingRoute.fastPath ? "comparison" : null,
+                cacheHit: false,
+                fastPath: pendingRoute.fastPath || false,
+                toolLatencyMs: pendingRoute.toolLatencyMs ?? null,
+                responseLatencyMs,
+              };
+              console.log("[LOCAL_ROUTER]", routerLog);
+              postLog({
+                role: "system",
+                content: `[LOCAL_ROUTER] ${JSON.stringify(routerLog)}`,
+                eventId: `local_router_done_${pendingRoute.routeId}`,
+              });
             }
 
+            responseCreateCountsByRouteRef.current.delete(
+              pendingRoute.routeId
+            );
             pendingLocalRouteRef.current = null;
           }
 
@@ -23768,6 +23982,7 @@ function AppContent() {
     lastCivicQueryTurnsRef.current = [];
     localConversationContextRef.current = createInitialLocalConversationContext();
     pendingLocalRouteRef.current = null;
+    responseCreateCountsByRouteRef.current.clear();
     isOutputAudioBufferActiveRef.current = false;
 
     conversationState.current = {
