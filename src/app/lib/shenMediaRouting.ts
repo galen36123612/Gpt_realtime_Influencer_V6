@@ -30,6 +30,16 @@ export function selectShenMediaKBTool(
   const text = compactText(userText);
   if (!text || CIVIC_DIRECTORY_PATTERN.test(text)) return null;
 
+  // In the 沈伯洋 persona, a first-turn question about "my recent interviews"
+  // is already sufficiently scoped and must not wait for an explicit name.
+  if (
+    /(?:最近|最新|今天|昨天|這幾天|本週|上週).*(?:採訪|受訪|專訪|新聞|媒體|記者|公開發言)/.test(
+      text
+    )
+  ) {
+    return SHEN_MEDIA_TOOL_NAME;
+  }
+
   if (SHEN_MEDIA_TOPIC_PATTERN.test(text)) {
     return SHEN_MEDIA_TOOL_NAME;
   }
